@@ -1,17 +1,16 @@
 package com.wechathook.ui
 
+import android.app.Activity
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.CompoundButton
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
 import com.wechathook.core.Prefs
 import com.wechathook.features.chat.AntiRecallFeature
 import com.wechathook.features.chat.HideAvatarFeature
@@ -26,8 +25,10 @@ import com.wechathook.features.readreceipt.ReadReceiptFeature
  * 在设置页里对每项功能做开关，并持久化到 SharedPreferences（微信宿主进程也读取同一文件，
  * 因此 hook 侧能感知到设置变化）。注意：由于 LSPosed 模块自身的 Context 与宿主的 getSharedPreferences
  * 指向不同，这里统一使用模块自己的 SharedPreferences 文件，并在 hook 侧通过宿主 Context 读取同名文件。
+ *
+ * 使用平台原生 [Activity]，不依赖 AppCompat，以免 LSPosed 模块资源链接出问题。
  */
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

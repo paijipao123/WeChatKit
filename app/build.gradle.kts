@@ -55,11 +55,6 @@ android {
 }
 
 dependencies {
-    // AndroidX 运行时依赖（模块设置页）
-    implementation(libs.androidx.core)
-    implementation(libs.androidx.appcompat)
-    implementation(libs.material)
-
     // 编译期依赖：Xposed API（不打包进 APK）
     compileOnly(libs.xposed)
 
