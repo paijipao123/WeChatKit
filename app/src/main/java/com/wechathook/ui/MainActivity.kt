@@ -33,8 +33,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 用模块自身 Context 初始化 Prefs（使设置页读写生效）
-        Prefs.initWithModuleContext(this)
+        // 读取模块自身配置（无需 context，Prefs 直接访问模块 data 目录下文件）
+        Prefs.reload()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -124,9 +124,9 @@ class MainActivity : Activity() {
         root.addView(row)
     }
 
-    private fun textInput(prefKey: String, label: String, hint: String): EditText {
+    private fun textInput(prefKey: String, label: String, header: String): EditText {
         val et = EditText(this).apply {
-            hint = hint
+            hint = header
             inputType = InputType.TYPE_CLASS_TEXT
             setText(Prefs.getString(prefKey, ""))
             setPadding(0, 8, 0, 8)

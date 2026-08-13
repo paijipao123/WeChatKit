@@ -24,47 +24,50 @@ object WeChatNetwork {
      * @return 是否初始化成功
      */
     fun init(classLoader: ClassLoader, finder: DexKitFinder): Boolean {
-        runCatching {
-            if (doSceneMethod != null) return true
-
+        if (doSceneMethod != null) return true
+        return try {
             // 1. 定位 NetSceneQueue 类：含参数数=4且引用 NetSceneObserverOwner 字符串的方法
             val queueClassNames = finder.findClassNamesByMethodStrings(
                 "MicroMsg.Mvvm.NetSceneObserverOwner", methodParamCount = 4
             )
-            val queueClassName = queueClassNames.firstOrNull() ?: run {
+            val queueClassName = queueClassNames.firstOrNull()
+            if (queueClassName == null) {
                 Logger.w("WeChatNetwork: 未定位到 NetSceneQueue 类")
-                return false
+                false
+            } else {
+                // 2. 定位返回该类的静态无参 getter（单例访问入口）
+                val clazz = de.robv.android.xposed.XposedHelpers.findClass(queueClassName, classLoader)
+                val getter = clazz.declaredMethods.firstOrNull { m ->
+                    Modifier.isStatic(m.modifiers) &&
+                        m.parameterCount == 0 &&
+                        m.returnType == clazz
+                }
+                netSceneQueueGetter = getter?.apply { isAccessible = true }
+                if (netSceneQueueGetter == null) {
+                    Logger.w("WeChatNetwork: 未找到 NetSceneQueue getter")
+                    false
+                } else {
+                    // 3. 定位 doScene 方法：单参数、参数可接收 NetScene 子类、返回 boolean
+                    val send = clazz.declaredMethods.firstOrNull { m ->
+                        Modifier.isPublic(m.modifiers) &&
+                            (m.returnType == Boolean::class.javaPrimitiveType || m.returnType == Boolean::class.java) &&
+                            m.parameterCount == 1 &&
+                            m.parameterTypes[0].name.contains("NetScene")
+                    }
+                    doSceneMethod = send?.apply { isAccessible = true }
+                    if (doSceneMethod == null) {
+                        Logger.w("WeChatNetwork: 未找到 doScene 发送方法")
+                        false
+                    } else {
+                        Logger.i("WeChatNetwork: 初始化成功, queue=$queueClassName")
+                        true
+                    }
+                }
             }
-
-            // 2. 定位返回该类的静态无参 getter（单例访问入口）
-            val clazz = de.robv.android.xposed.XposedHelpers.findClass(queueClassName, classLoader)
-
-            val getter = clazz.declaredMethods.firstOrNull { m ->
-                Modifier.isStatic(m.modifiers) &&
-                    m.parameterCount == 0 &&
-                    m.returnType == clazz
-            }
-            netSceneQueueGetter = getter?.apply { isAccessible = true }
-            if (netSceneQueueGetter == null) {
-                Logger.w("WeChatNetwork: 未找到 NetSceneQueue getter")
-                return false
-            }
-
-            // 3. 定位 doScene 方法：单参数、参数可接收 NetScene 子类、返回 boolean
-            val send = clazz.declaredMethods.firstOrNull { m ->
-                Modifier.isPublic(m.modifiers) &&
-                    (m.returnType == Boolean::class.javaPrimitiveType || m.returnType == Boolean::class.java) &&
-                    m.parameterCount == 1 &&
-                    m.parameterTypes[0].name.contains("NetScene")
-            }
-            doSceneMethod = send?.apply { isAccessible = true }
-            if (doSceneMethod == null) {
-                Logger.w("WeChatNetwork: 未找到 doScene 发送方法")
-                return false
-            }
-            Logger.i("WeChatNetwork: 初始化成功, queue=$queueClassName")
-            true
-        }.onFailure { Logger.e("WeChatNetwork: 初始化失败 $it"); false }.getOrDefault(false)
+        } catch (t: Throwable) {
+            Logger.e("WeChatNetwork: 初始化失败 $t")
+            false
+        }
     }
 
     /** 发送一个 NetScene 网络请求对象。 */

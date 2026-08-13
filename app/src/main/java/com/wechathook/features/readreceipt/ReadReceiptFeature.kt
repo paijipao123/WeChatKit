@@ -14,8 +14,10 @@ import com.wechathook.core.ReflectFieldWalker
 import de.robv.android.xposed.XposedHelpers
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
@@ -153,9 +155,8 @@ object ReadReceiptFeature : Feature {
                     .put("wxId", wxId)
                     .put("content", content)
                     .put("createTime", createTime)
-                val body = okhttp3.RequestBody.create(
-                    okhttp3.MediaType.parse("application/json; charset=utf-8"),
-                    json.toString()
+                val body = json.toString().toRequestBody(
+                    "application/json; charset=utf-8".toMediaType()
                 )
                 val req = Request.Builder().url("$server/register").post(body).build()
                 httpClient.newCall(req).execute().use { resp ->

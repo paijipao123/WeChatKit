@@ -11,11 +11,11 @@ object Views {
     /** 深度优先遍历 View 树，对每个 View 调用 [visit]（含根）。 */
     @JvmStatic
     fun walk(root: View?, visit: (View) -> Boolean) {
-        var v: View? = root ?: return
-        if (visit(v)) return
-        if (v is ViewGroup) {
-            for (i in 0 until v.childCount) {
-                walk(v.getChildAt(i), visit)
+        if (root == null) return
+        if (visit(root)) return
+        if (root is ViewGroup) {
+            for (i in 0 until root.childCount) {
+                walk(root.getChildAt(i), visit)
             }
         }
     }

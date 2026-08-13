@@ -37,10 +37,11 @@ class HookEntry : IXposedHookLoadPackage {
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         if (lpparam.packageName != PKG_WECHAT) return
 
+        // 加载配置（读取模块自身 data 目录下的 prefs 文件）
         try {
-            lpparam.applicationContext?.let { Prefs.init(it) }
+            Prefs.reload()
         } catch (t: Throwable) {
-            Logger.w("初始化 Prefs 失败: $t")
+            Logger.w("加载 Prefs 失败: $t")
         }
 
         Logger.i("已加载到进程: ${lpparam.processName}")

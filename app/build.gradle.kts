@@ -27,11 +27,12 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = "1.8"
+        // DexKit 2.0.7 以 JVM target 11 编译，其 inline 方法要求我们的 bytecode 不低于 11。
+        jvmTarget = "17"
     }
 
     buildFeatures {
