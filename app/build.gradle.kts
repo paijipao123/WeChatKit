@@ -23,6 +23,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 个人自用模块：用 Android 默认 debug 签名，使 release 产物也能直接安装，
+            // 无需额外维护 keystore。（若以后要发布到应用市场，请换成正式签名。）
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
