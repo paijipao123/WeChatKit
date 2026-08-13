@@ -1,0 +1,23 @@
+[versions]
+agp = "8.2.2"
+kotlin = "1.9.22"
+core = "1.6.1"
+appcompat = "1.6.1"
+material = "1.11.0"
+xposed = "82"
+dexkit = "2.0.7"
+okhttp = "4.12.0"
+coroutines = "1.7.3"
+
+[libraries]
+androidx-core = { group = "androidx.core", name = "core-ktx", version.ref = "core" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+xposed = { group = "de.robv.android.xposed", name = "api", version.ref = "xposed" }
+dexkit = { group = "org.luckypray", name = "dexkit", version.ref = "dexkit" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

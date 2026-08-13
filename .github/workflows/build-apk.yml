@@ -1,0 +1,54 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+  workflow_dispatch:   # 允许手动触发构建
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      # 若仓库缺少 gradlew / gradle-wrapper.jar（本地无法生成二进制时），
+      # 用 Gradle 8.2 现场生成 wrapper。
+      - name: Generate Gradle wrapper (if missing)
+        run: |
+          if [ ! -f gradlew ]; then
+            curl -fsSL -o /tmp/gradle.zip \
+              https://services.gradle.org/distributions/gradle-8.2-bin.zip
+            unzip -q /tmp/gradle.zip -d /tmp/
+            /tmp/gradle-8.2/bin/gradle wrapper --gradle-version 8.2
+          fi
+        shell: bash
+
+      - name: Grant execute permission
+        run: chmod +x gradlew || true
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: wechathook-debug
+          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: wechathook-release
+          path: app/build/outputs/apk/release/*.apk

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Hook 作用域：声明本模块要注入的进程。
+    <xposedscope> 项格式：包名 或 包名/进程名（省略进程名表示全部进程）。
+-->
+<xposedscope>
+    <!-- 微信主进程及所有子进程 -->
+    <xposedscope>com.tencent.mm</xposedscope>
+</xposedscope>
