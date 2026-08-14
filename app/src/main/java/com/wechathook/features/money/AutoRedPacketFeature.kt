@@ -111,6 +111,13 @@ object AutoRedPacketFeature : Feature {
         // 只抢别人发的红包
         if (values.getAsInteger("isSend") == 1) return
 
+        // 屏蔽名单检查：跳过被屏蔽的人发的红包
+        val talker = values.getAsString("talker") ?: ""
+        if (com.wechathook.core.BlockList.isBlocked(talker)) {
+            Logger.i("[$name] 已屏蔽 ${talker} 的红包，跳过")
+            return
+        }
+
         Logger.i("[$name] 检测到红包消息 type=$type")
         dispatchRedPacket(values)
     }

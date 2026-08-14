@@ -6,7 +6,6 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -233,28 +232,54 @@ class MainActivity : AppCompatActivity() {
             setTextColor(0xFF00897B.toInt())
             setPadding(0, 0, 0, dp(8))
         })
-        col.addView(label("已读回执服务器地址"))
+
+        // 自定义撤回提示
+        col.addView(textInputLabel("自定义撤回提示"))
+        col.addView(textInput("anti_recall_notice", "例如: 「{sender}」撤回了一条消息（已拦截）",
+            "支持占位符: {sender} 发送者, {content} 消息内容, {time} 撤回时间"))
+
+        // 已读回执服务器
+        col.addView(textInputLabel("已读回执服务器地址"))
         col.addView(textInput("read_receipt_server", "例如 http://192.168.1.10:8080"))
-        col.addView(label("拆包延迟 (毫秒)"))
+
+        // 拆包延迟
+        col.addView(textInputLabel("拆包延迟 (毫秒)"))
         col.addView(textInput("auto_redpacket_delay", "默认 800"))
+
+        // 屏蔽名单（红包/转账）
+        col.addView(textInputLabel("屏蔽名单（自动抢红包/转账跳过的人）"))
+        col.addView(textInput("blocked_talkers", "用逗号分隔昵称或微信号, 例如: 张三,李四",
+            "输入后重启微信生效"))
+
         card.addView(col)
         return card
     }
 
-    private fun label(text: String): TextView = TextView(this).apply {
+    private fun textInputLabel(text: String): TextView = TextView(this).apply {
         this.text = text
         textSize = 13f
         setTextColor(0xFF757575.toInt())
-        setPadding(0, dp(8), 0, dp(4))
+        setPadding(0, dp(10), 0, dp(4))
     }
 
-    private fun textInput(prefKey: String, hint: String): EditText {
-        return EditText(this).apply {
+    private fun textInput(prefKey: String, hint: String, supporting: String = ""): LinearLayout {
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val til = com.google.android.material.textfield.TextInputLayout(this).apply {
+            boxBackgroundMode = com.google.android.material.textfield.TextInputLayout.BOX_BACKGROUND_OUTLINE
+            boxCornerRadiusTopStart = dp(10).toFloat()
+            boxCornerRadiusTopEnd = dp(10).toFloat()
+            boxCornerRadiusBottomStart = dp(10).toFloat()
+            boxCornerRadiusBottomEnd = dp(10).toFloat()
+            isHintEnabled = false
+            setPadding(0, 0, 0, 0)
+        }
+        val et = com.google.android.material.textfield.TextInputEditText(this).apply {
             this.hint = hint
             textSize = 14f
             setText(Prefs.getString(prefKey, ""))
-            setPadding(dp(8), dp(4), dp(8), dp(4))
-            setBackgroundResource(android.R.drawable.edit_text)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
             addTextChangedListener(object : android.text.TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -263,6 +288,17 @@ class MainActivity : AppCompatActivity() {
                 }
             })
         }
+        til.addView(et)
+        wrapper.addView(til)
+        if (supporting.isNotEmpty()) {
+            wrapper.addView(TextView(this).apply {
+                text = supporting
+                textSize = 11f
+                setTextColor(0xFF9E9E9E.toInt())
+                setPadding(dp(4), dp(2), 0, 0)
+            })
+        }
+        return wrapper
     }
 
     private fun divider(): View {

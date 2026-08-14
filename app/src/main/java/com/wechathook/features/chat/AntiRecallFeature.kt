@@ -116,7 +116,7 @@ object AntiRecallFeature : Feature {
         }
     }
 
-    /** 拦截撤回：把解析结果里的撤回类型标记清空。 */
+    /** 拦截撤回：把解析结果里的撤回类型标记清空，并按模板改写提示文本。 */
     private fun interceptRevoke(param: XC_MethodHook.MethodHookParam) {
         try {
             val result = param.result as? MutableMap<*, *> ?: return
@@ -127,13 +127,45 @@ object AntiRecallFeature : Feature {
             if (!sysType.equals("revokemsg", ignoreCase = true)) return
 
             Logger.i("[$name] 检测到撤回消息，已拦截（保留原消息）")
-            // 清空撤回类型标记，微信将不把它视为撤回消息
-            map[".sysmsg.\$type"] = null
 
-            // 额外：清掉 newmsgid，避免微信按新消息 ID 找到原消息并替换
+            // 提取撤回信息，用于自定义提示
+            val replaceMsg = map[".sysmsg.revokemsg.replacemsg"] as? String ?: ""
+            val newMsgId = map[".sysmsg.revokemsg.newmsgid"] as? String ?: ""
+            val session = map[".sysmsg.revokemsg.session"] as? String ?: ""
+
+            // 从 replacemsg 提取发送者（格式如「张三」或 "张三"）
+            val sender = extractSender(replaceMsg)
+
+            // 生成自定义提示文本（用户配置模板）
+            val noticeTemplate = Prefs.getString("anti_recall_notice", "")
+            val finalReplaceMsg = if (noticeTemplate.isNotBlank()) {
+                noticeTemplate
+                    .replace("{sender}", sender)
+                    .replace("{time}", java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date()))
+            } else {
+                replaceMsg
+            }
+
+            // 保留原消息：清掉撤回标记，微信不把它当撤回处理
+            map[".sysmsg.\$type"] = null
             map[".sysmsg.revokemsg.newmsgid"] = null
+
+            // 若配置了自定义提示且 replacemsg 非空，改写提示文本（微信会用 replacemsg 显示系统提示）
+            if (finalReplaceMsg.isNotBlank() && finalReplaceMsg != replaceMsg) {
+                map[".sysmsg.revokemsg.replacemsg"] = finalReplaceMsg
+                Logger.i("[$name] 自定义撤回提示: $finalReplaceMsg")
+            }
         } catch (t: Throwable) {
             // 单次解析失败不影响
         }
+    }
+
+    /** 从 replacemsg（如「张三」撤回了一条消息）提取发送者名。 */
+    private fun extractSender(replaceMsg: String): String {
+        if (replaceMsg.isEmpty()) return ""
+        // 匹配「」或 "" 内的名字
+        val m = Regex("""[「"]([^」"]+)[」"]""").find(replaceMsg)
+        return m?.groupValues?.get(1) ?: ""
     }
 }

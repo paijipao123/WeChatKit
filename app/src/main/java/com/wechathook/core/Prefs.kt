@@ -59,27 +59,38 @@ object Prefs {
     /** hook 进程里主动读取一次，把文件内容载入内存缓存。 */
     @Synchronized
     fun reload() {
-        cache.clear()
+        // 不直接 clear：先读入临时 map，成功才替换，失败保留旧值
+        val tmp = HashMap<String, Any?>()
         // 1. 终极方案：微信进程用自己的 context 读微信自己的 prefs
         //    （容器侧 root 同步器把模块配置复制到微信 shared_prefs/wechathook_config.xml，
         //     微信读自己的文件，无任何 SELinux 限制）
-        if (tryLoadViaHostPrefs()) return
+        if (tryLoadViaHostPrefsInto(tmp)) {
+            cache.clear(); cache.putAll(tmp)
+            lastLoadedMtime = System.currentTimeMillis()
+            return
+        }
 
         // 2. XSharedPreferences（LSPosed 框架读取模块 prefs）
-        if (tryLoadViaXSharedPreferences()) return
+        if (tryLoadViaXSharedPreferencesInto(tmp)) {
+            cache.clear(); cache.putAll(tmp)
+            lastLoadedMtime = System.currentTimeMillis()
+            return
+        }
 
         // 3. 回退：直接读模块私有目录文件（chmod 644 后，部分环境可读）
         val file = readFile()
         if (file != null && file.exists()) {
-            loadFrom(file)
+            loadFromInto(file, tmp)
+            if (tmp.isNotEmpty()) {
+                cache.clear(); cache.putAll(tmp)
+                lastLoadedMtime = file.lastModified()
+                return
+            }
         }
+        // 全部失败：保留原 cache（不清空），避免开关状态丢失
     }
 
-    /**
-     * 用宿主（微信）进程的 context 读取"微信自己 shared_prefs 里的 wechathook_config"。
-     * 该文件由容器侧 root 同步器从模块配置复制而来。
-     */
-    private fun tryLoadViaHostPrefs(): Boolean {
+    private fun tryLoadViaHostPrefsInto(target: HashMap<String, Any?>): Boolean {
         return try {
             val at = Class.forName("android.app.ActivityThread")
             val app = at.getMethod("currentApplication").invoke(null) as? android.app.Application
@@ -88,7 +99,7 @@ object Prefs {
             val all = prefs.all
             if (all.isEmpty()) return false
             for ((k, v) in all) {
-                cache[k] = v
+                target[k] = v
             }
             true
         } catch (_: Throwable) {
@@ -97,17 +108,16 @@ object Prefs {
     }
 
     /** 通过 LSPosed 的 XSharedPreferences 读取模块配置。 */
-    private fun tryLoadViaXSharedPreferences(): Boolean {
+    private fun tryLoadViaXSharedPreferencesInto(target: HashMap<String, Any?>): Boolean {
         return try {
             val prefs = de.robv.android.xposed.XSharedPreferences("com.wechathook", FILE_NAME)
-            // LSPosed 中 makeWorldReadable 会通过框架确保文件可读
             try {
                 prefs.makeWorldReadable()
             } catch (_: Throwable) {}
             val all = prefs.all ?: return false
             if (all.isEmpty()) return false
             for ((k, v) in all) {
-                cache[k] = v
+                target[k] = v
             }
             true
         } catch (_: Throwable) {
@@ -115,7 +125,7 @@ object Prefs {
         }
     }
 
-    private fun loadFrom(file: File) {
+    private fun loadFromInto(file: File, target: HashMap<String, Any?>) {
         try {
             val f = XmlPullParserFactory.newInstance().newPullParser()
             f.setInput(InputStreamReader(file.inputStream(), Charsets.UTF_8))
@@ -130,10 +140,10 @@ object Prefs {
                 } else if (event == XmlPullParser.TEXT && name != null) {
                     val raw = f.text
                     when (type) {
-                        "boolean" -> cache[name] = raw == "true"
-                        "long" -> cache[name] = raw.toLongOrNull()
-                        "int" -> cache[name] = raw.toIntOrNull()
-                        else -> cache[name] = raw
+                        "boolean" -> target[name] = raw == "true"
+                        "long" -> target[name] = raw.toLongOrNull()
+                        "int" -> target[name] = raw.toIntOrNull()
+                        else -> target[name] = raw
                     }
                     name = null; type = null
                 }
@@ -148,7 +158,9 @@ object Prefs {
         runCatching {
             val file = writeFile()
             file.parentFile?.mkdirs()
-            FileOutputStream(file).use { os ->
+            // 原子写：先写临时文件再 rename，避免读取方读到半截 XML
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            FileOutputStream(tmp).use { os ->
                 val utf8 = Charsets.UTF_8
                 os.write("<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n".toByteArray(utf8))
                 os.write("<map>\n".toByteArray(utf8))
@@ -163,6 +175,13 @@ object Prefs {
                 }
                 os.write("</map>\n".toByteArray(utf8))
             }
+            // rename 覆盖
+            if (tmp.exists()) {
+                if (file.exists()) file.delete()
+                tmp.renameTo(file)
+            }
+            // 更新 mtime 记录，避免下次 ensureLoaded 误判变化
+            lastLoadedMtime = file.lastModified()
 
             // 关键：让微信进程能读模块私有目录的配置
             // 整条目录链路放行: /data/user/0/com.wechathook (711), shared_prefs (711)

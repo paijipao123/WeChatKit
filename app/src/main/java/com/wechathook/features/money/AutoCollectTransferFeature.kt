@@ -109,6 +109,13 @@ object AutoCollectTransferFeature : Feature {
 
         if (!isTransfer) return
 
+        // 屏蔽名单检查：跳过被屏蔽的人发的转账
+        val talker = values.getAsString("talker") ?: ""
+        if (com.wechathook.core.BlockList.isBlocked(talker)) {
+            Logger.i("[$name] 已屏蔽 ${talker} 的转账，跳过")
+            return
+        }
+
         val msgId = values.getAsString("msgId") ?: ""
         if (msgId.isEmpty() || lastMsgId == msgId) return
         lastMsgId = msgId
