@@ -46,25 +46,35 @@ class DexKitFinder internal constructor(
         }
 
         private fun extractAndLoadDexKit(): Boolean {
-            // 1. 从 DexKitBridge 类的 CodeSource 拿模块 APK 路径
-            val apkPath = try {
-                DexKitBridge::class.java.protectionDomain
-                    ?.codeSource?.location?.toURI()?.path
-                    ?: return false
-            } catch (_: Throwable) {
+            // 1. 多路探测模块 APK 路径
+            val apkPath = findModuleApkPath()
+            if (apkPath == null) {
+                Logger.w("DexKitFinder: 找不到模块 APK 路径")
                 return false
             }
 
             // 2. 选择 ABI 对应的 so 条目名
-            val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: return false
+            val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull()
+            if (abi == null) {
+                Logger.w("DexKitFinder: 无法确定 ABI")
+                return false
+            }
             val entryName = "lib/$abi/libdexkit.so"
 
             // 3. 解压到宿主缓存目录
-            val outDir = hostCacheDir() ?: return false
+            val outDir = hostCacheDir()
+            if (outDir == null) {
+                Logger.w("DexKitFinder: 无法获取宿主缓存目录")
+                return false
+            }
             val outFile = java.io.File(outDir, "libdexkit.so")
             try {
                 java.util.zip.ZipFile(apkPath).use { zip ->
-                    val entry = zip.getEntry(entryName) ?: return false
+                    val entry = zip.getEntry(entryName)
+                    if (entry == null) {
+                        Logger.w("DexKitFinder: $apkPath 中没有 $entryName")
+                        return false
+                    }
                     zip.getInputStream(entry).use { input ->
                         outFile.outputStream().use { output -> input.copyTo(output) }
                     }
@@ -73,11 +83,78 @@ class DexKitFinder internal constructor(
                 System.load(outFile.absolutePath)
                 nativeLoaded.set(true)
                 Logger.i("DexKitFinder: 已从 $apkPath 提取并加载 libdexkit.so")
-                return true
+                true
             } catch (t: Throwable) {
                 Logger.w("DexKitFinder: 提取/加载 so 失败: $t")
-                return false
+                false
             }
+        }
+
+        /** 多路探测模块 APK 路径。 */
+        private fun findModuleApkPath(): String? {
+            // 方式 1（最可靠）：通过宿主 PackageManager 查模块包信息
+            try {
+                val at = Class.forName("android.app.ActivityThread")
+                val app = at.getMethod("currentApplication").invoke(null) as? android.app.Application
+                if (app != null) {
+                    val ai = app.packageManager.getApplicationInfo("com.wechathook", 0)
+                    if (ai != null && ai.sourceDir != null) {
+                        Logger.i("DexKitFinder: 通过 PackageManager 找到模块 APK: ${ai.sourceDir}")
+                        return ai.sourceDir
+                    }
+                }
+            } catch (t: Throwable) {
+                Logger.w("DexKitFinder: PackageManager 探测失败: $t")
+            }
+
+            // 方式 2：遍历模块类 classloader 的 dex 元素
+            try {
+                val cl = DexKitBridge::class.java.classLoader
+                val pathList = de.robv.android.xposed.XposedHelpers.getObjectField(cl, "pathList")
+                val dexElements = de.robv.android.xposed.XposedHelpers.getObjectField(pathList, "dexElements") as Array<*>
+                for (el in dexElements) {
+                    val zip = de.robv.android.xposed.XposedHelpers.getObjectField(el, "zip")
+                    if (zip != null) {
+                        val path = de.robv.android.xposed.XposedHelpers.getObjectField(zip, "path") as? String
+                        if (path != null && path.contains("wechathook")) {
+                            Logger.i("DexKitFinder: 通过 classloader 找到模块 APK: $path")
+                            return path
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                Logger.w("DexKitFinder: classloader 探测失败: $t")
+            }
+
+            // 方式 3：CodeSource（部分环境可用）
+            try {
+                val p = DexKitBridge::class.java.protectionDomain
+                    ?.codeSource?.location?.toURI()?.path
+                if (p != null && p.endsWith(".apk")) {
+                    Logger.i("DexKitFinder: 通过 CodeSource 找到模块 APK: $p")
+                    return p
+                }
+            } catch (t: Throwable) {
+                Logger.w("DexKitFinder: CodeSource 探测失败: $t")
+            }
+
+            // 方式 4：直接扫描 /data/app 目录（root 环境可用）
+            try {
+                val dataApp = java.io.File("/data/app")
+                dataApp.listFiles()?.forEach { dir ->
+                    if (dir.name.contains("wechathook")) {
+                        val base = java.io.File(dir, "base.apk")
+                        if (base.exists()) {
+                            Logger.i("DexKitFinder: 通过 /data/app 扫描找到模块 APK: ${base.absolutePath}")
+                            return base.absolutePath
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                Logger.w("DexKitFinder: /data/app 扫描失败: $t")
+            }
+
+            return null
         }
 
         /** 拿到宿主进程可写目录（优先 cacheDir，退回 /data/local/tmp）。 */
