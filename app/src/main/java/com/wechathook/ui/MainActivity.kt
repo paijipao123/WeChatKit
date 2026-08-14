@@ -56,7 +56,12 @@ class MainActivity : AppCompatActivity() {
                     "feat_${HideAvatarFeature.key}", HideAvatarFeature.defaultEnabled()),
                 SwitchItem("聊天防撤回",
                     "对方撤回的消息保留显示",
-                    "feat_${AntiRecallFeature.key}", AntiRecallFeature.defaultEnabled()),
+                    "feat_${AntiRecallFeature.key}", AntiRecallFeature.defaultEnabled(),
+                    params = listOf(
+                        ParamItem("自定义撤回提示", "anti_recall_notice",
+                            "例如: 「{sender}」撤回了一条消息",
+                            "占位符: {sender} 发送者 / {time} 时间")
+                    )),
                 SwitchItem("朋友圈防删",
                     "阻止他人删除朋友圈后消失",
                     "feat_${AntiMomentsDeleteFeature.key}", AntiMomentsDeleteFeature.defaultEnabled()),
@@ -69,10 +74,18 @@ class MainActivity : AppCompatActivity() {
             listOf(
                 SwitchItem("自动抢红包",
                     "后台自动拆包/开包（有封号风险）",
-                    "feat_${AutoRedPacketFeature.key}", AutoRedPacketFeature.defaultEnabled()),
+                    "feat_${AutoRedPacketFeature.key}", AutoRedPacketFeature.defaultEnabled(),
+                    params = listOf(
+                        ParamItem("拆包延迟（毫秒）", "auto_redpacket_delay", "默认 800"),
+                        ParamItem("屏蔽名单", "blocked_talkers", "逗号分隔昵称/微信号")
+                    )),
                 SwitchItem("自动收款（转账）",
                     "后台自动确认收款（有封号风险）",
-                    "feat_${AutoCollectTransferFeature.key}", AutoCollectTransferFeature.defaultEnabled()),
+                    "feat_${AutoCollectTransferFeature.key}", AutoCollectTransferFeature.defaultEnabled(),
+                    params = listOf(
+                        ParamItem("收款延迟（毫秒）", "auto_collect_delay", "默认 1000"),
+                        ParamItem("屏蔽名单", "blocked_talkers", "逗号分隔昵称/微信号")
+                    )),
             )
         ))
 
@@ -82,12 +95,13 @@ class MainActivity : AppCompatActivity() {
             listOf(
                 SwitchItem("已读回执",
                     "配合 read-receipt-tracker 服务显示\"已读 X 人\"",
-                    "feat_${ReadReceiptFeature.key}", ReadReceiptFeature.defaultEnabled()),
+                    "feat_${ReadReceiptFeature.key}", ReadReceiptFeature.defaultEnabled(),
+                    params = listOf(
+                        ParamItem("服务器地址", "read_receipt_server",
+                            "例如 http://192.168.1.10:8080")
+                    )),
             )
         ))
-
-        // ---- 参数设置卡片 ----
-        root.addView(paramCard())
 
         // ---- 底部操作 ----
         root.addView(restartButton())
@@ -146,7 +160,21 @@ class MainActivity : AppCompatActivity() {
         return head
     }
 
-    data class SwitchItem(val title: String, val desc: String, val prefKey: String, val default: Boolean)
+    /** 单个参数输入项（齿轮弹窗里的配置）。 */
+    data class ParamItem(
+        val label: String,
+        val prefKey: String,
+        val hint: String,
+        val supporting: String = ""
+    )
+
+    data class SwitchItem(
+        val title: String,
+        val desc: String,
+        val prefKey: String,
+        val default: Boolean,
+        val params: List<ParamItem> = emptyList()
+    )
 
     /** 分组卡片。 */
     private fun card(title: String, items: List<SwitchItem>): MaterialCardView {
@@ -206,55 +234,43 @@ class MainActivity : AppCompatActivity() {
             }
         }
         row.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        // 齿轮图标（可调参数的功能才有）
+        if (item.params.isNotEmpty()) {
+            val gear = TextView(this).apply {
+                text = "⚙️"
+                textSize = 20f
+                gravity = Gravity.CENTER
+                setTextColor(0xFF00897B.toInt())
+                setPadding(dp(10), dp(6), dp(4), dp(6))
+                setOnClickListener { showParamDialog(item.title, item.params) }
+            }
+            row.addView(gear)
+        }
+
         row.addView(sw)
         return row
     }
 
-    /** 参数输入卡片。 */
-    private fun paramCard(): MaterialCardView {
-        val card = MaterialCardView(this).apply {
-            radius = dp(16).toFloat()
-            cardElevation = dp(1).toFloat()
-            setCardBackgroundColor(0xFFFFFFFF.toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = dp(12)
-            }
-        }
+    /** 齿轮弹窗：调对应功能的数值参数。 */
+    private fun showParamDialog(title: String, params: List<ParamItem>) {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setPadding(dp(24), dp(8), dp(24), dp(4))
         }
-        col.addView(TextView(this).apply {
-            text = "⚙️ 参数设置"
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF00897B.toInt())
-            setPadding(0, 0, 0, dp(8))
-        })
-
-        // 自定义撤回提示
-        col.addView(textInputLabel("自定义撤回提示"))
-        col.addView(textInput("anti_recall_notice", "例如: 「{sender}」撤回了一条消息（已拦截）",
-            "支持占位符: {sender} 发送者, {content} 消息内容, {time} 撤回时间"))
-
-        // 已读回执服务器
-        col.addView(textInputLabel("已读回执服务器地址"))
-        col.addView(textInput("read_receipt_server", "例如 http://192.168.1.10:8080"))
-
-        // 拆包延迟
-        col.addView(textInputLabel("拆包延迟 (毫秒)"))
-        col.addView(textInput("auto_redpacket_delay", "默认 800"))
-
-        // 屏蔽名单（红包/转账）
-        col.addView(textInputLabel("屏蔽名单（自动抢红包/转账跳过的人）"))
-        col.addView(textInput("blocked_talkers", "用逗号分隔昵称或微信号, 例如: 张三,李四",
-            "输入后重启微信生效"))
-
-        card.addView(col)
-        return card
+        params.forEach { p ->
+            col.addView(textInputLabel(p.label))
+            col.addView(textInput(p.prefKey, p.hint, p.supporting))
+        }
+        val scroll = ScrollView(this).apply { addView(col) }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("$title · 参数")
+            .setView(scroll)
+            .setPositiveButton("完成", null)
+            .show()
     }
 
+    /** 参数输入卡片。 */
     private fun textInputLabel(text: String): TextView = TextView(this).apply {
         this.text = text
         textSize = 13f
