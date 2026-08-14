@@ -60,14 +60,39 @@ object Prefs {
     @Synchronized
     fun reload() {
         cache.clear()
-        // 优先用 XSharedPreferences（LSPosed 框架代为读取模块 prefs，
-        // 不受应用间 SELinux 隔离限制——这是 Xposed 跨进程读配置的标准方案）
+        // 1. 终极方案：微信进程用自己的 context 读微信自己的 prefs
+        //    （容器侧 root 同步器把模块配置复制到微信 shared_prefs/wechathook_config.xml，
+        //     微信读自己的文件，无任何 SELinux 限制）
+        if (tryLoadViaHostPrefs()) return
+
+        // 2. XSharedPreferences（LSPosed 框架读取模块 prefs）
         if (tryLoadViaXSharedPreferences()) return
 
-        // 回退：直接读模块私有目录文件（chmod 644 后，部分环境可读）
+        // 3. 回退：直接读模块私有目录文件（chmod 644 后，部分环境可读）
         val file = readFile()
         if (file != null && file.exists()) {
             loadFrom(file)
+        }
+    }
+
+    /**
+     * 用宿主（微信）进程的 context 读取"微信自己 shared_prefs 里的 wechathook_config"。
+     * 该文件由容器侧 root 同步器从模块配置复制而来。
+     */
+    private fun tryLoadViaHostPrefs(): Boolean {
+        return try {
+            val at = Class.forName("android.app.ActivityThread")
+            val app = at.getMethod("currentApplication").invoke(null) as? android.app.Application
+                ?: return false
+            val prefs = app.getSharedPreferences("wechathook_config", android.content.Context.MODE_PRIVATE)
+            val all = prefs.all
+            if (all.isEmpty()) return false
+            for ((k, v) in all) {
+                cache[k] = v
+            }
+            true
+        } catch (_: Throwable) {
+            false
         }
     }
 
