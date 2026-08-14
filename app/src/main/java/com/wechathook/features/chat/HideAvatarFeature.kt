@@ -205,7 +205,9 @@ object HideAvatarFeature : Feature {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
-                        if (mode() == "all" && v.visibility == View.VISIBLE) v.visibility = View.GONE
+                        // onDraw 时头像必有有效坐标：作为方向判断的兜底
+                        // （view 被微信重新 setVisibility(VISIBLE) 后，onLayout 不一定触发，onDraw 一定触发）
+                        applyDirectionalHide(v)
                     } catch (_: Throwable) {}
                 }
             })
@@ -241,7 +243,18 @@ object HideAvatarFeature : Feature {
                 hideAvatarView(v)
                 return
             }
-            val cx = v.left + v.width / 2f
+            if (itemRoot.width <= 0 || v.width <= 0) return  // 尚未完成布局，等 onLayout/onDraw
+
+            // 关键：v.left 是相对"直接父容器"的坐标，不能直接和 itemRoot.width 比。
+            // 沿父链累加 left，得到头像中心相对消息 item 根的水平坐标。
+            var cx = v.left + v.width / 2f
+            var p: android.view.ViewParent? = v.parent
+            var guard = 0
+            while (p is View && p !== itemRoot && guard < 10) {
+                cx += p.left
+                p = p.parent
+                guard++
+            }
             val isLeft = cx <= itemRoot.width / 2f
             val hide = if (m == "incoming") isLeft else !isLeft
             if (hide) hideAvatarView(v)
