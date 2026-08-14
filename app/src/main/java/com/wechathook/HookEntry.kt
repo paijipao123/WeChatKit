@@ -127,6 +127,11 @@ class HookEntry : IXposedHookLoadPackage {
         if (dexLoaded.get()) return
         dexLoaded.set(true)
 
+        // 挂载微信设置页注入器（把模块入口藏进微信设置）
+        runCatching {
+            com.wechathook.core.SettingsInjector.hook(lpparam.classLoader)
+        }.onFailure { Logger.e("设置页注入器挂载失败: $it") }
+
         // 关键：Application 已创建，此时 ActivityThread.currentApplication() 可用，
         // Prefs 能通过"微信自己的 context 读微信自己的 prefs"拿到真实配置。
         // 重新加载配置并重新过滤功能（handleLoadPackage 阶段拿不到配置，

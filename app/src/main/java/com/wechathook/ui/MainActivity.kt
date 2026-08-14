@@ -52,6 +52,9 @@ class MainActivity : Activity() {
         root.addView(title("WeChatKit 微信增强"))
         root.addView(subtitle("功能开关与配置（修改后请重启微信生效）"))
 
+        // 显示当前微信版本（若从微信入口进入）
+        root.addView(versionInfo())
+
         // 各功能开关：key -> (标题, 说明, 默认开启)
         addSwitch(root, "feat_${HideAvatarFeature.key}", "隐藏消息头像（紧凑）",
             "只去左右头像，气泡间距与微信原版一致", HideAvatarFeature.defaultEnabled())
@@ -73,11 +76,48 @@ class MainActivity : Activity() {
         root.addView(section("自动抢红包"))
         root.addView(textInput("auto_redpacket_delay", "拆包延迟(ms)", "默认 800"))
 
+        // 重启微信按钮（让开关生效）
+        root.addView(restartWeChatButton())
+
         val scroll = ScrollView(this).apply {
             addView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         setContentView(scroll)
+    }
+
+    /** 显示微信版本信息。 */
+    private fun versionInfo(): TextView {
+        val v = com.wechathook.core.SymbolResolver.wechatVersionName
+        val tv = TextView(this).apply {
+            text = "当前微信版本: $v"
+            textSize = 12f
+            setTextColor(0xFF888888.toInt())
+            setPadding(0, 0, 0, 16)
+        }
+        return tv
+    }
+
+    /** 重启微信按钮：强制停止微信，使开关生效。 */
+    private fun restartWeChatButton(): android.widget.Button {
+        return android.widget.Button(this).apply {
+            text = "保存并重启微信（使开关生效）"
+            setOnClickListener {
+                Prefs.reload()
+                // 用 root 强制停止微信（容器侧有 root）
+                try {
+                    val p = java.lang.Runtime.getRuntime().exec(
+                        arrayOf("am", "force-stop", "com.tencent.mm")
+                    )
+                    p.waitFor()
+                    android.widget.Toast.makeText(this@MainActivity,
+                        "已重启微信，请重新打开", android.widget.Toast.LENGTH_LONG).show()
+                } catch (e: Throwable) {
+                    android.widget.Toast.makeText(this@MainActivity,
+                        "重启失败: $e", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     /** 是否已授予"所有文件访问"权限 (Android 11+) */
