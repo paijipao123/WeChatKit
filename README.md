@@ -19,7 +19,7 @@
 
 ---
 
-## 核心设计：DexKit 动态适配
+## 核心设计：DexKit 动态适配 + 版本兼容框架
 
 微信每次更新都可能混淆内部类名，硬编码类名会很快失效。本模块通过 **DexKit**
 按**稳定的特征字符串**（如网络请求名 `MicroMsg.NetSceneReceiveLuckyMoney`、
@@ -27,7 +27,27 @@
 动态检索目标类/方法，再用 XposedHelpers 完成 Hook，从而对微信小版本升级有
 较强的自适应性。
 
-关键文件：`app/src/main/java/com/wechathook/core/DexKitFinder.kt`
+### 从最新版向下兼容（多路符号定位）
+
+核心思路：**每个需要定位的符号提供"候选特征链"，逐个尝试，第一个命中的即用**。
+
+- **特征字符串优先**：协议名 / 日志 TAG / cgi 路径（如
+  `/cgi-bin/mmpay-bin/transferoperation`）在微信多个版本中保留，是最可靠的定位锚点；
+- **硬编码类名回退**：已知的旧版类名（如 `MaskLayout`、`AvatarImageView`）作为备选；
+- **网络架构双模式**：
+  - 新版（8.0.7x）：`NetSceneBase.doScene(dispatcher, callback)` +
+    hook `dispatch` 捕获真实 dispatcher；
+  - 旧版（8.0.x 之前）：`NetSceneQueue.doScene(netScene)`（legacy 模式自动回退）；
+- **微信版本检测**：启动时读取版本号并输出日志，便于按版本调试；
+- **功能级降级**：每个功能独立定位，某个功能在某版本定位失败不影响其他功能。
+
+关键文件：
+- `app/src/main/java/com/wechathook/core/DexKitFinder.kt`
+- `app/src/main/java/com/wechathook/core/SymbolResolver.kt`
+
+> 注意：红包/转账的**请求构造函数参数**在不同微信版本可能有差异，
+> 模块采用"带参构造失败自动回退"策略；若某版本构造参数变化导致失效，
+> 可在日志中看到定位结果，按新版本的构造函数调整。
 
 ---
 
