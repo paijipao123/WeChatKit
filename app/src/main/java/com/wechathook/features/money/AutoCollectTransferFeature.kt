@@ -112,8 +112,14 @@ object AutoCollectTransferFeature : Feature {
         lastMsgId = msgId
 
         Logger.i("[$name] 检测到转账消息 msgId=$msgId")
+        // 调试：打印前 2 次转账 XML 结构（帮助解析参数）
+        if (contentDumpCount.getAndIncrement() < 2) {
+            Logger.i("[$name] [DEBUG] 转账content: $content")
+        }
         collectAsync(msgId, content)
     }
+
+    private val contentDumpCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     /** 自动发起确认收款请求。 */
     private fun collectAsync(msgId: String, content0: String) {
@@ -135,30 +141,39 @@ object AutoCollectTransferFeature : Feature {
                 }
                 runCatching {
                     val cls = XposedHelpers.findClass(clsName, loader)
-                    // 从转账 XML 提取 transferid（转账单号）
+                    // 从转账 XML 提取转账参数
                     val transferId = extractXmlParam(content, "transferid")
                         .ifEmpty { extractXmlParam(content, "transcationid") }
-                    Logger.i("[$name] 转账单号: $transferId")
+                    val transactionId = extractXmlParam(content, "transcationid")
+                    val senderName = extractXmlParam(content, "sendertitle")
+                    val totalFee = extractXmlParam(content, "total_fee")
+                    val attach = extractXmlParam(content, "transfer_attach")
+                    val payerName = extractXmlParam(content, "payer_name")
+                    val receiverName = extractXmlParam(content, "receiver_name")
+                    Logger.i("[$name] 转账参数: transferId=$transferId transactionId=$transactionId sender=$senderName fee=$totalFee")
 
                     // n0 构造 (String, String, int, String, String, int, String, String, int, String, Map, long, String, String)
-                    // 参考 RemittanceDetailUI.y7: 第2个String="confirm"(确认收款)
+                    // 参考 RemittanceDetailUI.onCreate/y7:
+                    //   x0=transaction_id, l1=transfer_id, x1=total_fee(int), "confirm",
+                    //   y0=sender_name, p0=invalid_time(int), G1=transfer_attach, C1=?,
+                    //   V1=?, W1=?, X1=Map, long, A1=?, G1=?
                     val req = try {
                         XposedHelpers.newInstance(
                             cls,
-                            transferId,          // transferid
-                            "",                  // (l1)
-                            0,                   // (x1) int
-                            "confirm",           // 操作类型 = 确认收款
-                            "",                  // (y0)
-                            0,                   // (p0) int
-                            "",                  // (G1)
-                            "",                  // (C1)
-                            0,                   // (V1) int
-                            "",                  // (W1)
-                            java.util.HashMap<String, Any?>(),  // (X1) Map
-                            0L,                  // long
-                            "",                  // (A1)
-                            ""                   // (G1)
+                            transactionId.ifEmpty { transferId },  // x0: transaction_id
+                            transferId,                            // l1: transfer_id
+                            totalFee.toIntOrNull() ?: 0,           // x1: total_fee
+                            "confirm",                             // 操作类型 = 确认收款
+                            senderName,                            // y0: sender_name
+                            0,                                     // p0: invalid_time
+                            attach,                                // G1: transfer_attach
+                            "",                                    // C1
+                            0,                                     // V1
+                            "",                                    // W1
+                            java.util.HashMap<String, Any?>(),     // X1: Map
+                            0L,                                    // long
+                            payerName,                             // A1
+                            receiverName                           // G1(末尾)
                         )
                     } catch (e1: Throwable) {
                         // 构造参数不匹配时回退：无参构造（若存在）
