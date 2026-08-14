@@ -37,9 +37,6 @@ object HideAvatarFeature : Feature {
 
     private val maskLayoutClass = "com.tencent.mm.ui.base.MaskLayout"
 
-    /** 已隐藏的 View（避免重复处理）。 */
-    private val hiddenViews = java.util.Collections.newSetFromMap(WeakHashMap<View, Boolean>())
-
     override fun defaultEnabled() = true
 
     override fun isProcessSafe() = false
@@ -92,17 +89,22 @@ object HideAvatarFeature : Feature {
                 })
             }
 
-            // onMeasure: 收为 0 尺寸
+            // onMeasure: 强制 0 尺寸（即使 GONE 被重置，尺寸也是 0，不占空间）
             XposedBridge.hookAllMethods(clazz, "onMeasure", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
                         hideAvatarView(v)
+                        v.visibility = View.GONE
+                        param.setResult(Unit)  // 阻止原 onMeasure
+                        // 强制 0 尺寸
+                        v.measure(0, 0)
+                        v.setMeasuredDimension(0, 0)
                     } catch (_: Throwable) {}
                 }
             })
 
-            // onDraw/onAttachedToWindow: 兜底 GONE
+            // onAttachedToWindow: 兜底 GONE
             XposedBridge.hookAllMethods(clazz, "onAttachedToWindow", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
@@ -112,25 +114,55 @@ object HideAvatarFeature : Feature {
                 }
             })
 
-            // setImageBitmap / setVisibility 等绑定头像时也处理
+            // setVisibility: 微信每次 bind 都可能重新设为 VISIBLE，这里强制压回 GONE
             XposedBridge.hookAllMethods(clazz, "setVisibility", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
-                        if (v.visibility == View.VISIBLE) hideAvatarView(v)
+                        hideAvatarView(v)
                     } catch (_: Throwable) {}
                 }
             })
 
-            Logger.i("[$name] 已 Hook 头像类 (构造/onMeasure/onAttachedToWindow/setVisibility)")
+            // setImageBitmap/setImageResource: 头像加载时强制清空
+            XposedBridge.hookAllMethods(clazz, "setImageBitmap", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        val v = param.thisObject as? View ?: return
+                        hideAvatarView(v)
+                        param.result = null
+                    } catch (_: Throwable) {}
+                }
+            })
+            XposedBridge.hookAllMethods(clazz, "setImageResource", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        val v = param.thisObject as? View ?: return
+                        hideAvatarView(v)
+                    } catch (_: Throwable) {}
+                }
+            })
+
+            // onDraw: 阻止绘制头像
+            XposedBridge.hookAllMethods(clazz, "onDraw", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        val v = param.thisObject as? View ?: return
+                        if (v.visibility == View.VISIBLE) {
+                            v.visibility = View.GONE
+                        }
+                    } catch (_: Throwable) {}
+                }
+            })
+
+            Logger.i("[$name] 已 Hook 头像类 (构造/onMeasure/onAttach/setVisibility/setImage/onDraw)")
         }.onFailure { Logger.e("[$name] 头像类 Hook 失败: $it") }
     }
 
     /** 隐藏单个头像 View：收窄自身 + 父容器宽度，保持气泡锚点紧凑。 */
     private fun hideAvatarView(v: View) {
-        if (hiddenViews.contains(v)) return
-        hiddenViews.add(v)
-
+        // 每次调用都强制隐藏（不短路）——RecyclerView 复用同一 View 时，
+        // 微信可能把它重新设为 VISIBLE 并重新绑定，必须反复压回。
         // 1) 自身 GONE + 尺寸 0
         v.visibility = View.GONE
         runCatching {
