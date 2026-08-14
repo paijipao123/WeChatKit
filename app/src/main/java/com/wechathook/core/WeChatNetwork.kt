@@ -40,11 +40,14 @@ object WeChatNetwork {
         return try {
             // 1. 定位 NetScene 基类 (modelbase.m1 / NetSceneBase):
             //    日志 TAG "MicroMsg.NetSceneBase" (已通过 dex 反编译确认)
+            //    多组特征候选，兼容不同版本
             val baseClassNames = finder.findClassNamesByStrings("MicroMsg.NetSceneBase")
+                .ifEmpty { finder.findClassNamesByStrings("NetSceneBase") }
             val baseClassName = baseClassNames.firstOrNull()
             if (baseClassName == null) {
-                Logger.w("WeChatNetwork: 未定位到网络基类")
-                return false
+                // 旧版微信：可能没有 NetSceneBase TAG，尝试老架构 NetSceneQueue
+                Logger.w("WeChatNetwork: 未定位到 NetScene 基类，尝试旧版架构")
+                return initLegacy(classLoader, finder)
             }
             val baseClazz = de.robv.android.xposed.XposedHelpers.findClass(baseClassName, classLoader)
             Logger.i("WeChatNetwork: 找到 NetScene 基类: $baseClassName")
@@ -99,8 +102,64 @@ object WeChatNetwork {
         }
     }
 
+    /** 旧版微信网络层（NetSceneQueue 架构，8.0.x 之前）。 */
+    private fun initLegacy(classLoader: ClassLoader, finder: DexKitFinder): Boolean {
+        return try {
+            // 定位 NetSceneQueue 类：含 "doScene failed" 特征（队列类打印自己的日志）
+            val queueNames = finder.findClassNamesByStrings("doScene failed")
+                .ifEmpty { finder.findClassNamesByStrings("MicroMsg.NetSceneQueue") }
+            val queueClassName = queueNames.firstOrNull()
+            if (queueClassName == null) {
+                Logger.w("WeChatNetwork: 旧版架构定位失败")
+                return false
+            }
+            val clazz = de.robv.android.xposed.XposedHelpers.findClass(queueClassName, classLoader)
+            Logger.i("WeChatNetwork: 找到 NetSceneQueue 类: $queueClassName")
+
+            // doScene(NetScene) 方法
+            val send = clazz.declaredMethods.firstOrNull { m ->
+                m.name == "doScene" && m.parameterCount == 1
+            }?.apply { isAccessible = true }
+            if (send == null) {
+                Logger.w("WeChatNetwork: 旧版 doScene 未找到")
+                return false
+            }
+            // 旧版模式：sendNetScene 直接调 queue.doScene(netScene)
+            doSceneMethod = send
+            // 用反射调用队列静态 getter
+            val getter = clazz.declaredMethods.firstOrNull { m ->
+                java.lang.reflect.Modifier.isStatic(m.modifiers) &&
+                    m.parameterCount == 0 && m.returnType == clazz
+            }?.apply { isAccessible = true }
+            if (getter == null) {
+                Logger.w("WeChatNetwork: 旧版队列 getter 未找到")
+                return false
+            }
+            netSceneQueueGetter = getter
+            legacyMode = true
+            Logger.i("WeChatNetwork: 旧版架构初始化成功, queue=$queueClassName")
+            true
+        } catch (t: Throwable) {
+            Logger.e("WeChatNetwork: 旧版初始化失败 $t")
+            false
+        }
+    }
+
+    /** 旧版模式标志：sendNetScene 走 queue.doScene(netScene)。 */
+    private var legacyMode = false
+
     /** 发送一个 NetScene 网络请求对象。 */
     fun sendNetScene(netScene: Any): Boolean {
+        // 旧版架构：直接 queue.doScene(netScene)
+        if (legacyMode) {
+            return runCatching {
+                val send = doSceneMethod ?: return false
+                val queue = netSceneQueueGetter?.invoke(null) ?: return false
+                val ok = send.invoke(queue, netScene) as? Boolean ?: false
+                Logger.i("WeChatNetwork: (旧版) doScene -> $netScene 结果=$ok")
+                ok
+            }.getOrElse { Logger.e("WeChatNetwork: 旧版发送失败", it); false }
+        }
         return runCatching {
             val doScene = doSceneMethod ?: run {
                 Logger.e("WeChatNetwork: 网络层未初始化")

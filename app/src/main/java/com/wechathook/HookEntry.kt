@@ -137,6 +137,9 @@ class HookEntry : IXposedHookLoadPackage {
             Logger.w("延迟加载 Prefs 失败: $t")
         }
 
+        // 检测微信版本（用于版本感知适配）
+        com.wechathook.core.SymbolResolver.detectWechatVersion()
+
         val finalFeatures = dexFeatures.filter { feature ->
             Prefs.getBoolean("feat_${feature.key}", feature.defaultEnabled())
         }

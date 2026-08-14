@@ -61,9 +61,11 @@ object AutoCollectTransferFeature : Feature {
             Logger.w("[$name] 微信网络层初始化失败，功能可能无法发包。")
         }
 
-        // 定位确认收款请求类：按 cgi URI 特征
+        // 定位确认收款请求类（多组特征候选，兼容不同版本）
         transferClsName = finder.findClassNameByStrings(STR_CONFIRM_URI)
             ?: finder.findClassNameByStrings("transferoperation")
+            ?: finder.findClassNameByStrings("NetSceneTransferOperation")
+            ?: finder.findClassNameByStrings("mmpay-bin", "transfer")
         Logger.i("[$name] 定位到的转账收款类: $transferClsName")
 
         // 监听转账消息入库并触发自动收款

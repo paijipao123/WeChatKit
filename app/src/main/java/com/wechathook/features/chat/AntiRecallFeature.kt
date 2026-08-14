@@ -83,23 +83,35 @@ object AntiRecallFeature : Feature {
         }
 
         // ---- 策略 2：doRevokeMsg 阻断（辅助） ----
-        val revokeMethods = finder.findMethodsByStrings(
-            classLoader,
-            onlyPackages = listOf("com.tencent.mm"),
-            strings = arrayOf("doRevokeMsg xmlSrvMsgId=%d talker=%s isGet=%s")
+        // 特征字符串随版本变化，多组候选
+        val revokeCandidates = arrayOf(
+            arrayOf("doRevokeMsg xmlSrvMsgId=%d talker=%s isGet=%s"),
+            arrayOf("doRevokeMsg"),
+            arrayOf("revokemsg", "newmsgid")
         )
-        if (revokeMethods.isNotEmpty()) {
-            revokeMethods.take(3).forEach { method ->
-                runCatching {
-                    XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                        override fun beforeHookedMethod(param: MethodHookParam) {
-                            param.result = null
-                        }
-                    })
-                    Logger.i("[$name] doRevokeMsg 阻断已生效: ${method.declaringClass.name}")
-                }.onFailure { Logger.e("[$name] Hook doRevokeMsg 失败: $it") }
+        var revokeFound = false
+        for (cand in revokeCandidates) {
+            val revokeMethods = finder.findMethodsByStrings(
+                classLoader,
+                onlyPackages = listOf("com.tencent.mm"),
+                strings = cand
+            )
+            if (revokeMethods.isNotEmpty()) {
+                revokeFound = true
+                revokeMethods.take(3).forEach { method ->
+                    runCatching {
+                        XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                            override fun beforeHookedMethod(param: MethodHookParam) {
+                                param.result = null
+                            }
+                        })
+                        Logger.i("[$name] doRevokeMsg 阻断已生效: ${method.declaringClass.name}")
+                    }.onFailure { Logger.e("[$name] Hook doRevokeMsg 失败: $it") }
+                }
+                break
             }
-        } else {
+        }
+        if (!revokeFound) {
             Logger.w("[$name] 未定位到 doRevokeMsg，策略2不可用。")
         }
     }

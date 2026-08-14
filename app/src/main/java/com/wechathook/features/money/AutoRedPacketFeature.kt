@@ -66,9 +66,13 @@ object AutoRedPacketFeature : Feature {
             Logger.w("[$name] 微信网络层初始化失败，功能可能无法发包。")
         }
 
-        // 定位红包请求类
+        // 定位红包请求类（多组特征候选，兼容不同版本）
         receiveClsName = finder.findClassNameByStrings(STR_RECEIVE)
+            ?: finder.findClassNameByStrings("NetSceneReceiveLuckyMoney")
+            ?: finder.findClassNamesByMethodStrings("ReceiveLuckyMoney").firstOrNull()
         openClsName = finder.findClassNameByStrings(STR_OPEN)
+            ?: finder.findClassNameByStrings("NetSceneOpenLuckyMoney")
+            ?: finder.findClassNamesByMethodStrings("OpenLuckyMoney").firstOrNull()
         Logger.i("[$name] Receive 类=$receiveClsName, Open 类=$openClsName")
 
         // 1. 监听红包消息入库

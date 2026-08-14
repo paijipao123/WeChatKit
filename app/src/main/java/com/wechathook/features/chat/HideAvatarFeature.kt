@@ -9,6 +9,7 @@ import com.wechathook.core.Logger
 import com.wechathook.core.Views
 import com.wechathook.core.Reflect
 import com.wechathook.core.Prefs
+import com.wechathook.core.SymbolResolver
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
@@ -55,13 +56,48 @@ object HideAvatarFeature : Feature {
         if (!enable) return
 
         Logger.i("[$name] 开始 Hook")
+        SymbolResolver.detectWechatVersion()
+        Logger.i("[$name] 微信版本: ${SymbolResolver.wechatVersionName}")
 
-        // ---- 主策略：直接 hook 微信头像 View 类 ----
-        hookAvatarViewClass(classLoader)
-        hookAvatarViewClass2(classLoader)
+        // ---- 主策略：动态定位微信头像 View 类 ----
+        // 8.0.7x: ChattingAvatarImageView (X2C 布局)
+        // 老版本: AvatarImageView / MaskLayout
+        val avatarClass = SymbolResolver.resolveClass(
+            classLoader, finder,
+            featureGroups = arrayOf(
+                arrayOf("MicroMsg.ChattingAvatarImageView"),
+                arrayOf("ChattingAvatarImageView")
+            ),
+            candidateNames = arrayOf(
+                "com.tencent.mm.ui.chatting.view.ChattingAvatarImageView",
+                "com.tencent.mm.ui.chatting.view.AvatarImageView"
+            )
+        )
+        if (avatarClass != null) {
+            hookAvatarClassByName(avatarClass, classLoader, "头像类")
+        }
 
-        // ---- 主策略2：hook 消息项 View 控制器 g0 (viewitems 包, 持有 avatarIV) ----
-        hookChatItemController(classLoader)
+        // ---- 主策略2：hook 消息项 View 控制器 (viewitems 包, 持有 avatarIV) ----
+        // 8.0.7x: viewitems.g0；其他版本类名可能不同，用 avatarIV 字段特征兜底
+        val controllerClass = SymbolResolver.findExistingClass(
+            classLoader,
+            "com.tencent.mm.ui.chatting.viewitems.g0",
+            "com.tencent.mm.ui.chatting.viewitems.cb0",   // 旧版可能的控制器
+            "com.tencent.mm.ui.chatting.viewitems.az"     // 更旧版本
+        )
+        if (controllerClass != null) {
+            hookChatItemControllerByName(controllerClass, classLoader)
+        } else {
+            // 兜底：通过字段特征找持有 avatarIV 的类
+            if (finder != null) {
+                val holders = finder.findClassNamesByStrings("avatarIV")
+                holders.take(3).forEach { holder ->
+                    runCatching {
+                        hookChatItemControllerByName(holder, classLoader)
+                    }.onFailure { Logger.e("[$name] 控制器兜底 Hook $holder 失败: $it") }
+                }
+            }
+        }
 
         // ---- 辅助 1：消息 item onBindView 遍历隐藏 ----
         if (finder != null) {
@@ -78,13 +114,12 @@ object HideAvatarFeature : Feature {
         hookMaskLayoutFallback(classLoader)
     }
 
-    /** 直接 hook 微信头像 View 类。 */
-    private fun hookAvatarViewClass(classLoader: ClassLoader) {
+    /** 按名称 hook 头像类（复用 [hookAvatarViewClass] 的逻辑）。 */
+    private fun hookAvatarClassByName(className: String, classLoader: ClassLoader, tag: String) {
         runCatching {
-            val clazz = XposedHelpers.findClass(AVATAR_VIEW_CLASS, classLoader)
-            Logger.i("[$name] 找到头像类: $AVATAR_VIEW_CLASS")
+            val clazz = XposedHelpers.findClass(className, classLoader)
+            Logger.i("[$name] 找到$tag: $className")
 
-            // 构造方法：实例创建后立即隐藏（最可靠）
             runCatching {
                 XposedBridge.hookAllConstructors(clazz, object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
@@ -95,15 +130,12 @@ object HideAvatarFeature : Feature {
                     }
                 })
             }
-
-            // onMeasure: 强制 0 尺寸（即使 GONE 被重置，尺寸也是 0，不占空间）
             XposedBridge.hookAllMethods(clazz, "onMeasure", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
                         hideAvatarView(v)
                         v.visibility = View.GONE
-                        // 阻止原 onMeasure，用反射调用 protected setMeasuredDimension
                         param.result = Unit
                         runCatching {
                             val m = View::class.java.getDeclaredMethod("setMeasuredDimension", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
@@ -113,8 +145,6 @@ object HideAvatarFeature : Feature {
                     } catch (_: Throwable) {}
                 }
             })
-
-            // onAttachedToWindow: 兜底 GONE
             XposedBridge.hookAllMethods(clazz, "onAttachedToWindow", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
@@ -123,8 +153,6 @@ object HideAvatarFeature : Feature {
                     } catch (_: Throwable) {}
                 }
             })
-
-            // setVisibility: 微信每次 bind 都可能重新设为 VISIBLE，这里强制压回 GONE
             XposedBridge.hookAllMethods(clazz, "setVisibility", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
@@ -133,8 +161,6 @@ object HideAvatarFeature : Feature {
                     } catch (_: Throwable) {}
                 }
             })
-
-            // setImageBitmap/setImageResource: 头像加载时强制清空
             XposedBridge.hookAllMethods(clazz, "setImageBitmap", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
@@ -152,24 +178,19 @@ object HideAvatarFeature : Feature {
                     } catch (_: Throwable) {}
                 }
             })
-
-            // onDraw: 阻止绘制头像
             XposedBridge.hookAllMethods(clazz, "onDraw", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
-                        if (v.visibility == View.VISIBLE) {
-                            v.visibility = View.GONE
-                        }
+                        if (v.visibility == View.VISIBLE) v.visibility = View.GONE
                     } catch (_: Throwable) {}
                 }
             })
-
-            Logger.i("[$name] 已 Hook 头像类 (构造/onMeasure/onAttach/setVisibility/setImage/onDraw)")
-        }.onFailure { Logger.e("[$name] 头像类 Hook 失败: $it") }
+            Logger.i("[$name] 已 Hook $tag: $className")
+        }.onFailure { Logger.e("[$name] $tag Hook 失败: $it") }
     }
 
-    /** 隐藏单个头像 View：收窄自身 + 父容器宽度，保持气泡锚点紧凑。 */
+    /** 直接 hook 微信头像 View 类。 */
     private fun hideAvatarView(v: View) {
         // 每次调用都强制隐藏（不短路）——RecyclerView 复用同一 View 时，
         // 微信可能把它重新设为 VISIBLE 并重新绑定，必须反复压回。
@@ -198,105 +219,6 @@ object HideAvatarFeature : Feature {
     }
 
     /** Hook 第二个头像类（AvatarImageView）。 */
-    private fun hookAvatarViewClass2(classLoader: ClassLoader) {
-        runCatching {
-            val clazz = XposedHelpers.findClass(AVATAR_VIEW_CLASS2, classLoader)
-            Logger.i("[$name] 找到头像类2: $AVATAR_VIEW_CLASS2")
-            XposedBridge.hookAllConstructors(clazz, object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
-                        val v = param.thisObject as? View ?: return
-                        hideAvatarView(v)
-                    } catch (_: Throwable) {}
-                }
-            })
-            XposedBridge.hookAllMethods(clazz, "onMeasure", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    try {
-                        val v = param.thisObject as? View ?: return
-                        hideAvatarView(v)
-                        v.visibility = View.GONE
-                        param.result = Unit
-                        runCatching {
-                            val m = View::class.java.getDeclaredMethod("setMeasuredDimension", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-                            m.isAccessible = true
-                            m.invoke(v, 0, 0)
-                        }
-                    } catch (_: Throwable) {}
-                }
-            })
-            XposedBridge.hookAllMethods(clazz, "setVisibility", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
-                        val v = param.thisObject as? View ?: return
-                        hideAvatarView(v)
-                    } catch (_: Throwable) {}
-                }
-            })
-            Logger.i("[$name] 已 Hook 头像类2")
-        }.onFailure { Logger.e("[$name] 头像类2 Hook 失败: $it") }
-    }
-
-    /** Hook 消息项 View 控制器 g0 (viewitems 包, 持有 avatarIV 字段)。 */
-    private fun hookChatItemController(classLoader: ClassLoader) {
-        runCatching {
-            val clazz = XposedHelpers.findClass("com.tencent.mm.ui.chatting.viewitems.g0", classLoader)
-            Logger.i("[$name] 找到消息项控制器: viewitems.g0")
-
-            // create(View): 每次消息项创建 View 时, 隐藏其中的头像
-            XposedBridge.hookAllMethods(clazz, "create", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
-                        val view = param.args[0] as? View ?: return
-                        // 反射取 avatarIV 字段
-                        val avatarIv = runCatching {
-                            XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? View
-                        }.getOrNull()
-                        if (avatarIv != null) {
-                            hideAvatarView(avatarIv)
-                        } else {
-                            // 遍历 View 树找头像类
-                            Views.walk(view) { v ->
-                                if (v.javaClass.name == AVATAR_VIEW_CLASS) {
-                                    hideAvatarView(v)
-                                }
-                                false
-                            }
-                        }
-                    } catch (_: Throwable) {}
-                }
-            })
-
-            // setChattingItem: 每次绑定消息时也处理
-            XposedBridge.hookAllMethods(clazz, "setChattingItem", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
-                        val view = runCatching {
-                            (param.thisObject as? Any)?.let { obj ->
-                                XposedHelpers.callMethod(obj, "getMainContainerView") as? View
-                            }
-                        }.getOrNull() ?: return
-                        val avatarIv = runCatching {
-                            XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? View
-                        }.getOrNull()
-                        if (avatarIv != null) {
-                            hideAvatarView(avatarIv)
-                        } else {
-                            Views.walk(view) { v ->
-                                if (v.javaClass.name == AVATAR_VIEW_CLASS) {
-                                    hideAvatarView(v)
-                                }
-                                false
-                            }
-                        }
-                    } catch (_: Throwable) {}
-                }
-            })
-
-            Logger.i("[$name] 已 Hook 消息项控制器 (create/setChattingItem)")
-        }.onFailure { Logger.e("[$name] 消息项控制器 Hook 失败: $it") }
-    }
-
     private fun hookClass(className: String, classLoader: ClassLoader) {
         runCatching {
             val clazz = XposedHelpers.findClass(className, classLoader)
