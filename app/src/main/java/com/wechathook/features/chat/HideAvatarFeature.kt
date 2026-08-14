@@ -251,8 +251,9 @@ object HideAvatarFeature : Feature {
             var p: android.view.ViewParent? = v.parent
             var guard = 0
             while (p is View && p !== itemRoot && guard < 10) {
-                cx += p.left
-                p = p.parent
+                val pv = p as View
+                cx += pv.left
+                p = pv.parent
                 guard++
             }
             val isLeft = cx <= itemRoot.width / 2f
