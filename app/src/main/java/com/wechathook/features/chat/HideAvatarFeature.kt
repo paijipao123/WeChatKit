@@ -254,10 +254,30 @@ object HideAvatarFeature : Feature {
                 Logger.w("[$name] holder 中未找到 View (holder=${holder.javaClass.name})")
                 return
             }
+            // 调试：前 5 次打印消息 View 树结构（帮助定位头像真实位置）
+            if (debugDumpCount.getAndIncrement() < 5) {
+                dumpViewTree(holderView)
+            }
             hideAvatarIn(holderView)
         } catch (t: Throwable) {
             Logger.e("[$name] applyHide 异常: $t")
         }
+    }
+
+    private val debugDumpCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** 打印消息 View 树（调试用）。 */
+    private fun dumpViewTree(root: View) {
+        val sb = StringBuilder()
+        var count = 0
+        Views.walk(root) { v ->
+            if (count < 40) {
+                sb.append(v.javaClass.name).append(" | ")
+            }
+            count++
+            false
+        }
+        Logger.i("[$name] [DEBUG] 消息View树($count): $sb")
     }
 
     private fun holderToView(holder: Any): View? {

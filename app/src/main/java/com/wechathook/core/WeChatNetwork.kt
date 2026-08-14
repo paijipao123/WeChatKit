@@ -32,8 +32,13 @@ object WeChatNetwork {
     fun init(classLoader: ClassLoader, finder: DexKitFinder): Boolean {
         if (doSceneMethod != null && (netSceneQueueGetter != null || queueInstance != null)) return true
         return try {
-            // 1. 定位 NetSceneQueue 类：含日志 TAG "MicroMsg.NetSceneQueue"
-            val queueClassNames = finder.findClassNamesByStrings("MicroMsg.NetSceneQueue")
+            // 1. 定位 NetSceneQueue 类：
+            //    a) 首选: 含 "doScene failed" 的类（真正的队列类会打印自己的 doScene 失败日志）
+            //    b) 回退: 含 "MicroMsg.NetSceneQueue" TAG 的类
+            var queueClassNames = finder.findClassNamesByStrings("doScene failed")
+            if (queueClassNames.isEmpty()) {
+                queueClassNames = finder.findClassNamesByStrings("MicroMsg.NetSceneQueue")
+            }
             val queueClassName = queueClassNames.firstOrNull()
             if (queueClassName == null) {
                 Logger.w("WeChatNetwork: 未定位到 NetSceneQueue 类")
