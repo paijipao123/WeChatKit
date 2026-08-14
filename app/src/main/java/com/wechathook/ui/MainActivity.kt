@@ -44,6 +44,11 @@ class MainActivity : Activity() {
             setPadding(48, 32, 48, 32)
         }
 
+        // 若尚未授予"所有文件访问"权限，顶部显示提示条（可点击重新授权）
+        if (android.os.Build.VERSION.SDK_INT >= 30 && !isAllFilesAccessGranted()) {
+            root.addView(permissionBanner())
+        }
+
         root.addView(title("WeChatKit 微信增强"))
         root.addView(subtitle("功能开关与配置（修改后请重启微信生效）"))
 
@@ -75,15 +80,55 @@ class MainActivity : Activity() {
         setContentView(scroll)
     }
 
+    /** 是否已授予"所有文件访问"权限 (Android 11+) */
+    private fun isAllFilesAccessGranted(): Boolean {
+        return try {
+            android.os.Environment.isExternalStorageManager()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /** 请求外部存储访问权限 */
     private fun requestStoragePermission() {
-        if (android.os.Build.VERSION.SDK_INT >= 23) {
-            val perms = arrayOf(
-                android.Manifest.permission.READ_EXTERNAL_STORAGE,
-                android.Manifest.permission.WRITE_EXTERNAL_STORAGE
-            )
-            try {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                // Android 11+: 需要"所有文件访问"权限 (MANAGE_EXTERNAL_STORAGE)
+                if (!isAllFilesAccessGranted()) {
+                    val intent = android.content.Intent(
+                        android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        android.net.Uri.parse("package:$packageName")
+                    )
+                    try {
+                        startActivity(intent)
+                    } catch (_: Throwable) {
+                        // 部分 ROM 不支持带包名的 intent, 退回通用设置页
+                        startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                    }
+                }
+            } else if (android.os.Build.VERSION.SDK_INT >= 23) {
+                // Android 6-10: 动态权限
+                val perms = arrayOf(
+                    android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                )
                 requestPermissions(perms, 100)
-            } catch (_: Throwable) {}
+            }
+        } catch (_: Throwable) {}
+    }
+
+    /** 未授权时显示的提示条（可点击重新授权） */
+    private fun permissionBanner(): TextView {
+        return TextView(this).apply {
+            text = "⚠️ 未授予\"所有文件访问\"权限，配置无法保存！\n点击此处授权"
+            textSize = 13f
+            setTextColor(0xFFFF6B6B.toInt())
+            setBackgroundColor(0x1AFF6B6B)
+            setPadding(24, 16, 24, 16)
+            isClickable = true
+            setOnClickListener {
+                requestStoragePermission()
+            }
         }
     }
 
