@@ -145,7 +145,7 @@ object HideAvatarFeature : Feature {
     /** 递归遍历 container 的字段树，找 avatarIV 字段的 ImageView。 */
     private fun findAvatarImageView(container: View): ImageView? {
         // 直接找 container 的 avatarIV 字段
-        runCatching {
+        try {
             val v = XposedHelpers.getObjectField(container, "avatarIV")
             if (v is ImageView) return v
         } catch (_: Throwable) {}
@@ -154,7 +154,7 @@ object HideAvatarFeature : Feature {
         if (container is ViewGroup) {
             for (i in 0 until container.childCount) {
                 val child = container.getChildAt(i)
-                runCatching {
+                try {
                     val v = XposedHelpers.getObjectField(child, "avatarIV")
                     if (v is ImageView) return v
                 } catch (_: Throwable) {}
