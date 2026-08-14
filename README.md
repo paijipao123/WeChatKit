@@ -45,6 +45,8 @@
 - `app/src/main/java/com/wechathook/core/DexKitFinder.kt`
 - `app/src/main/java/com/wechathook/core/SymbolResolver.kt`
 
+> 已实测适配：**8.0.71（平板）/ 8.0.76（手机）**。8.0.76 的核心架构与 8.0.71 一致，
+> 仅红包请求类被混淆改名（i6→l6、c6→f6），DexKit 特征定位自动适配。
 > 注意：红包/转账的**请求构造函数参数**在不同微信版本可能有差异，
 > 模块采用"带参构造失败自动回退"策略；若某版本构造参数变化导致失效，
 > 可在日志中看到定位结果，按新版本的构造函数调整。
