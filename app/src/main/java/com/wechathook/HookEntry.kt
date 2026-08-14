@@ -49,7 +49,6 @@ class HookEntry : IXposedHookLoadPackage {
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         if (lpparam.packageName != PKG_WECHAT) return
 
-        // 加载配置（读取模块自身 data 目录下的 prefs 文件）
         try {
             Prefs.reload()
         } catch (t: Throwable) {
@@ -57,102 +56,91 @@ class HookEntry : IXposedHookLoadPackage {
         }
 
         Logger.i("已加载到进程: ${lpparam.processName}")
-        val isMain = lpparam.processName == PKG_WECHAT
 
-        val enabledFeatures = FEATURES.filter { feature ->
-            Prefs.getBoolean("feat_${feature.key}", feature.defaultEnabled())
-        }
-
-        if (enabledFeatures.isEmpty()) {
-            Logger.i("没有已启用的功能，跳过 Hook。")
-            return
-        }
-
-        if (!isMain) {
-            // 子进程只处理安全的纯数据库功能
-            enabledFeatures
-                .filterNot { it is HideAvatarFeature }
-                .filter { it.isProcessSafe() }
-                .forEach { feature ->
-                    runCatching { feature.hook(lpparam.classLoader, null) }
-                        .onFailure { Logger.e("子进程加载 ${feature.name} 失败", it) }
-                }
-            return
-        }
-
-        Logger.i("主进程：开始加载功能 ${enabledFeatures.map { it.name }}")
-
-        // 1) 不依赖 DexKit 的功能立即加载
-        enabledFeatures.filterNot { it.needsDexKit() }.forEach { feature ->
-            runCatching { feature.hook(lpparam.classLoader, null) }
-                .onFailure { Logger.e("加载功能 ${feature.name} 失败: $it", it) }
-        }
-
-        // 2) 依赖 DexKit 的功能延迟到 Application.onCreate 后（确保 Context 可用）。
-        //    注意：这里传入"全部需要 DexKit 的功能"，在 onCreate 后按最新配置重新过滤，
-        //    因为 handleLoadPackage 阶段 Application 未创建、配置读不到，
-        //    依赖开关的功能（红包/转账）此时会被误过滤。
-        val allDexFeatures = FEATURES.filter { it.needsDexKit() }
-        if (allDexFeatures.isEmpty()) return
-
-        hookApplicationOnCreate(lpparam, allDexFeatures)
+        // 关键：微信使用 Tinker 热修复，补丁在 Application.onCreate 阶段才应用完成。
+        // 所有微信类（wcdb、UI、业务类）都可能被补丁替换，因此这里不立即 hook 任何类，
+        // 统一延迟到 Application.onCreate 之后、用真实 classLoader（补丁版）进行 hook。
+        hookApplicationOnCreate(lpparam)
     }
 
-    /** Hook 微信 Application.onCreate，在其后加载依赖 DexKit 的功能。 */
-    private fun hookApplicationOnCreate(
-        lpparam: XC_LoadPackage.LoadPackageParam,
-        dexFeatures: List<Feature>
-    ) {
+    /** Hook 微信 Application.onCreate，在其后用真实 classLoader 加载所有功能。 */
+    private fun hookApplicationOnCreate(lpparam: XC_LoadPackage.LoadPackageParam) {
         // 微信不同版本的主 Application 类名可能不同（8.0.71 已不是 MMApplication），
         // 直接 hook 基类 android.app.Application.onCreate：所有 Application 子类都会触发。
         runCatching {
             XposedBridge.hookAllMethods(android.app.Application::class.java, "onCreate", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    loadDexFeatures(lpparam, dexFeatures)
+                    loadFeatures(lpparam)
                 }
             })
             Logger.i("已挂载 Application.onCreate 延迟加载")
         }.onFailure {
             Logger.e("挂载 Application.onCreate 失败: $it")
             // 兜底：直接尝试加载（若 ActivityThread 已有 app 也能成功）
-            loadDexFeatures(lpparam, dexFeatures)
+            loadFeatures(lpparam)
         }
     }
 
-    private fun loadDexFeatures(
-        lpparam: XC_LoadPackage.LoadPackageParam,
-        dexFeatures: List<Feature>
-    ) {
+    private fun loadFeatures(lpparam: XC_LoadPackage.LoadPackageParam) {
         // 防止重复加载（onCreate 可能被调用多次）
         if (dexLoaded.get()) return
         dexLoaded.set(true)
 
-        // 挂载微信设置页注入器（把模块入口藏进微信设置）
-        runCatching {
-            com.wechathook.core.SettingsInjector.hook(lpparam.classLoader)
-        }.onFailure { Logger.e("设置页注入器挂载失败: $it") }
+        val isMain = lpparam.processName == PKG_WECHAT
 
-        // 关键：Application 已创建，此时 ActivityThread.currentApplication() 可用，
-        // Prefs 能通过"微信自己的 context 读微信自己的 prefs"拿到真实配置。
-        // 重新加载配置并重新过滤功能（handleLoadPackage 阶段拿不到配置，
-        // 导致依赖开关的功能（红包/转账）此前被误过滤）。
+        // 关键：微信使用 Tinker 热修复。补丁应用后，微信的类由 Tinker classLoader 加载，
+        // 而 lpparam.classLoader 是原始 PathClassLoader —— 用它 hook 挂到的是"旧" Class 对象，
+        // 运行时微信用的是补丁版 Class，导致 hook 全部失效（表现为功能全无）。
+        // 因此必须用 Application 的实际 classLoader（补丁应用后即 Tinker classLoader）来 hook。
+        val realLoader = try {
+            val at = Class.forName("android.app.ActivityThread")
+            val app = at.getMethod("currentApplication").invoke(null) as? android.app.Application
+            app?.classLoader ?: lpparam.classLoader
+        } catch (_: Throwable) {
+            lpparam.classLoader
+        }
+        Logger.i("类加载器: real=${realLoader.javaClass.name}, lpparam=${lpparam.classLoader.javaClass.name}")
+
+        // Application 已创建，此时能读到宿主（微信）prefs 里的真实配置
         try {
             Prefs.reload()
         } catch (t: Throwable) {
             Logger.w("延迟加载 Prefs 失败: $t")
         }
-
-        // 检测微信版本（用于版本感知适配）
         com.wechathook.core.SymbolResolver.detectWechatVersion()
 
-        val finalFeatures = dexFeatures.filter { feature ->
+        val enabled = FEATURES.filter { feature ->
             Prefs.getBoolean("feat_${feature.key}", feature.defaultEnabled())
         }
-        Logger.i("延迟加载功能: ${finalFeatures.map { it.name }}")
+        Logger.i("${if (isMain) "主进程" else "子进程"} 启用功能: ${enabled.map { it.name }}")
 
-        DexKitFinder.with(lpparam.classLoader) { finder ->
-            finalFeatures.forEach { feature ->
-                runCatching { feature.hook(lpparam.classLoader, finder) }
+        if (!isMain) {
+            // 子进程只处理安全的纯数据库功能
+            enabled
+                .filterNot { it is HideAvatarFeature }
+                .filter { it.isProcessSafe() }
+                .forEach { feature ->
+                    runCatching { feature.hook(realLoader, null) }
+                        .onFailure { Logger.e("子进程加载 ${feature.name} 失败", it) }
+                }
+            return
+        }
+
+        // 主进程：挂载微信设置页注入器（把模块入口藏进微信设置）
+        runCatching {
+            com.wechathook.core.SettingsInjector.hook(realLoader)
+        }.onFailure { Logger.e("设置页注入器挂载失败: $it") }
+
+        // 非 DexKit 功能（朋友圈防删）不依赖 DexKit，直接 hook
+        enabled.filterNot { it.needsDexKit() }.forEach { feature ->
+            runCatching { feature.hook(realLoader, null) }
+                .onFailure { Logger.e("加载功能 ${feature.name} 失败: $it", it) }
+        }
+
+        // 依赖 DexKit 的功能
+        DexKitFinder.with(realLoader) { finder ->
+            enabled.filter { it.needsDexKit() }.forEach { feature ->
+                runCatching { feature.hook(realLoader, finder) }
                     .onFailure { Logger.e("加载功能 ${feature.name} 失败: $it", it) }
             }
         }
