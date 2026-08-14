@@ -27,6 +27,9 @@ object WeChatNetwork {
     private var doSceneMethod: Method? = null
     private var u0Class: Class<*>? = null
 
+    /** 旧版架构：获取 NetSceneQueue 实例的静态 getter。 */
+    private var netSceneQueueGetter: Method? = null
+
     /** 从微信自身发包流程中捕获的 dispatcher 实例。 */
     @Volatile
     private var capturedDispatcher: Any? = null

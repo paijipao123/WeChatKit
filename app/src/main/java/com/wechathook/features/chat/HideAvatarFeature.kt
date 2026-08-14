@@ -336,4 +336,62 @@ object HideAvatarFeature : Feature {
             Logger.i("[$name] 已挂载 MaskLayout 兜底 Hook")
         }.onFailure { Logger.e("[$name] MaskLayout 兜底 Hook 失败: $it") }
     }
+
+    /** Hook 消息项 View 控制器 (viewitems 包, 持有 avatarIV 字段)。 */
+    private fun hookChatItemControllerByName(className: String, classLoader: ClassLoader) {
+        runCatching {
+            val clazz = XposedHelpers.findClass(className, classLoader)
+            Logger.i("[$name] 找到消息项控制器: $className")
+
+            // create(View): 每次消息项创建 View 时, 隐藏其中的头像
+            XposedBridge.hookAllMethods(clazz, "create", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val view = param.args[0] as? View ?: return
+                        val avatarIv = runCatching {
+                            XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? View
+                        }.getOrNull()
+                        if (avatarIv != null) {
+                            hideAvatarView(avatarIv)
+                        } else {
+                            Views.walk(view) { v ->
+                                if (v.javaClass.name == AVATAR_VIEW_CLASS) {
+                                    hideAvatarView(v)
+                                }
+                                false
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                }
+            })
+
+            // setChattingItem: 每次绑定消息时也处理
+            XposedBridge.hookAllMethods(clazz, "setChattingItem", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val view = runCatching {
+                            (param.thisObject as? Any)?.let { obj ->
+                                XposedHelpers.callMethod(obj, "getMainContainerView") as? View
+                            }
+                        }.getOrNull() ?: return
+                        val avatarIv = runCatching {
+                            XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? View
+                        }.getOrNull()
+                        if (avatarIv != null) {
+                            hideAvatarView(avatarIv)
+                        } else {
+                            Views.walk(view) { v ->
+                                if (v.javaClass.name == AVATAR_VIEW_CLASS) {
+                                    hideAvatarView(v)
+                                }
+                                false
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                }
+            })
+
+            Logger.i("[$name] 已 Hook 消息项控制器 (create/setChattingItem)")
+        }.onFailure { Logger.e("[$name] 消息项控制器 Hook 失败: $it") }
+    }
 }
