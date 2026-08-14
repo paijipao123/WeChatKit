@@ -14,36 +14,29 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * 自动收款（转账）。
  *
- * 和自动抢红包一致，采用**纯后台网络层 hook**，不跳转页面、不模拟点击：
- * 1. hook WCDB 数据库 `insertWithOnConflict`，监听 `message` 表插入转账消息。
- * 2. 识别微信转账消息（type 为转账类型），解析 content 得到转账参数。
- * 3. 用 DexKit 定位微信「确认收款」的网络请求类，构造请求并通过 [WeChatNetwork]
- *    发送，完成自动收款。
+ * 纯后台网络层 hook：监听 message 表插入转账消息，构造微信「确认收款」请求
+ * （`/cgi-bin/mmpay-bin/transferoperation`）并通过 [WeChatNetwork] 发送。
  *
- * > 注意：微信的转账收款类名在历史模块中通常带 `NetSceneTransfer`/`Transfer` 特征，
- * > 但它不像红包那样有 `MicroMsg.NetSceneReceiveLuckyMoney` 这种稳定日志字符串。
- * > 因此这里把待核对的类名/命令行签名做成可配置字符串常量，**需要按你实际使用的
- * > 微信版本反编译 (jadx) 核对后调整**，否则该功能可能定位失败。
+ * 微信 8.0.71 的确认收款请求类（已通过 dex 反编译确认）：
+ * `com.tencent.mm.plugin.remittance.model.n0`
+ * - getUri -> "/cgi-bin/mmpay-bin/transferoperation"
+ * - 构造 (String, String, int, String, String, int, String, String, int, String, Map, long, String, String)
+ *   —— 参考 RemittanceDetailUI.y7: 第二个 String 参数为 "confirm"（确认收款操作）
+ * - 继承 tenpay.model.o（有 doScene，走 NetSceneBase 发包机制）
+ *
+ * > 风控警告：自动收转账属于高风险操作。
  */
 object AutoCollectTransferFeature : Feature {
 
     override val key = "auto_collect_transfer"
     override val name = "自动收款（转账）"
 
-    // ============ 待按目标微信版本核对的字符串特征 ============
-    // 以下字符串用于 DexKit 定位转账客户端请求类。微信不同版本这些字符串/类名不一，
-    // 若定位失败，可用 jadx 反编译微信，在 dex 里搜索 "Transfer"/"Oplog" 相关类来更新。
-    private const val STR_TRANSFER = "MicroMsg.NetSceneTransfer"   // 转账主请求类特征
-    private const val STR_TRANSFER_EXT = "NetSceneTransferExt"      // 收款扩展请求类特征
-
-    // 微信转账消息类型（部分版本为 436207665 家族之外的特殊值，这里用类名/字段判定为主）
-    // ==================================================
-
-    private val transfers = ConcurrentHashMap<String, Map<String, String>>()
+    /** 确认收款 cgi 特征（用于 DexKit 定位请求类）。 */
+    private const val STR_CONFIRM_URI = "/cgi-bin/mmpay-bin/transferoperation"
 
     private var transferClsName: String? = null
 
-    private var lastSendId: String? = null
+    private var lastMsgId: String? = null
     private var hostLoader: ClassLoader? = null
 
     private val enable: Boolean get() = Prefs.getBoolean("auto_collect_transfer_enable", true)
@@ -68,12 +61,10 @@ object AutoCollectTransferFeature : Feature {
             Logger.w("[$name] 微信网络层初始化失败，功能可能无法发包。")
         }
 
-        // 定位转账收款请求类：优先精确类名字符串，失败则放宽到"类内方法含 Transfer 特征"。
-        transferClsName = finder.findClassNameByStrings(STR_TRANSFER)
-            ?: finder.findClassNameByStrings(STR_TRANSFER_EXT)
-            ?: finder.findClassNamesByMethodStrings(STR_TRANSFER).firstOrNull()
-
-        Logger.i("[$name] 定位到的转账类: $transferClsName")
+        // 定位确认收款请求类：按 cgi URI 特征
+        transferClsName = finder.findClassNameByStrings(STR_CONFIRM_URI)
+            ?: finder.findClassNameByStrings("transferoperation")
+        Logger.i("[$name] 定位到的转账收款类: $transferClsName")
 
         // 监听转账消息入库并触发自动收款
         hookDatabaseInsert(classLoader)
@@ -111,42 +102,74 @@ object AutoCollectTransferFeature : Feature {
         // 转账消息的 content 通常是 XML，内含转账扩展标记
         val isTransfer = content.contains("transcationid", ignoreCase = true)
                 || content.contains("transferid", ignoreCase = true)
-                || content.contains("NetSceneTransfer", ignoreCase = true)
+                || content.contains("wcpayinfo", ignoreCase = true)
                 || content.contains("paymsgtype", ignoreCase = true)
 
         if (!isTransfer) return
 
         val msgId = values.getAsString("msgId") ?: ""
-        if (msgId.isEmpty() || lastSendId == msgId) return
-        lastSendId = msgId
+        if (msgId.isEmpty() || lastMsgId == msgId) return
+        lastMsgId = msgId
 
         Logger.i("[$name] 检测到转账消息 msgId=$msgId")
         collectAsync(msgId, content)
     }
 
-    /** 自动发起收款请求。 */
+    /** 自动发起确认收款请求。 */
     private fun collectAsync(msgId: String, content: String) {
-        val sendId = msgId
         val loader = hostLoader ?: return
 
         Thread {
             try {
                 if (collectDelay > 0) Thread.sleep(collectDelay)
                 val clsName = transferClsName ?: run {
-                    Logger.w("[$name] 转账收款类未定位，自动收款未触发（需按微信版本核对特征）。")
+                    Logger.w("[$name] 转账收款类未定位，自动收款未触发。")
                     return@Thread
                 }
                 runCatching {
                     val cls = XposedHelpers.findClass(clsName, loader)
-                    // 转账/收款请求构造参数因版本而异；这里给出常用形态，若失效按反编译结果调整。
-                    // 常见构造：(int fieldCount, String... ) 或非无参，需核对。
-                    val req = XposedHelpers.newInstance(cls)
+                    // 从转账 XML 提取 transferid（转账单号）
+                    val transferId = extractXmlParam(content, "transferid")
+                        .ifEmpty { extractXmlParam(content, "transcationid") }
+                    Logger.i("[$name] 转账单号: $transferId")
+
+                    // n0 构造 (String, String, int, String, String, int, String, String, int, String, Map, long, String, String)
+                    // 参考 RemittanceDetailUI.y7: 第2个String="confirm"(确认收款)
+                    val req = try {
+                        XposedHelpers.newInstance(
+                            cls,
+                            transferId,          // transferid
+                            "",                  // (l1)
+                            0,                   // (x1) int
+                            "confirm",           // 操作类型 = 确认收款
+                            "",                  // (y0)
+                            0,                   // (p0) int
+                            "",                  // (G1)
+                            "",                  // (C1)
+                            0,                   // (V1) int
+                            "",                  // (W1)
+                            java.util.HashMap<String, Any?>(),  // (X1) Map
+                            0L,                  // long
+                            "",                  // (A1)
+                            ""                   // (G1)
+                        )
+                    } catch (e1: Throwable) {
+                        // 构造参数不匹配时回退：无参构造（若存在）
+                        Logger.w("[$name] 带参构造失败($e1)，尝试无参")
+                        XposedHelpers.newInstance(cls)
+                    }
                     WeChatNetwork.sendNetScene(req)
-                    Logger.i("[$name] 已触发收款请求 $sendId")
+                    Logger.i("[$name] 已触发确认收款请求 $msgId")
                 }.onFailure { Logger.e("[$name] 构造/发送收款请求失败 $it") }
             } catch (t: Throwable) {
                 Logger.e("[$name] 自动收款异常 $t")
             }
         }.start()
+    }
+
+    private fun extractXmlParam(xml: String, tag: String): String {
+        val cdata = Regex("<$tag><!\\[CDATA\\[(.*?)]]></$tag>").find(xml)
+            ?: Regex("<$tag>(.*?)</$tag>").find(xml)
+        return cdata?.groupValues?.get(1) ?: ""
     }
 }
