@@ -60,11 +60,33 @@ object Prefs {
     @Synchronized
     fun reload() {
         cache.clear()
-        // 读优先：私有目录（chmod 644 后可被微信读）→ sdcard
+        // 优先用 XSharedPreferences（LSPosed 框架代为读取模块 prefs，
+        // 不受应用间 SELinux 隔离限制——这是 Xposed 跨进程读配置的标准方案）
+        if (tryLoadViaXSharedPreferences()) return
+
+        // 回退：直接读模块私有目录文件（chmod 644 后，部分环境可读）
         val file = readFile()
         if (file != null && file.exists()) {
             loadFrom(file)
-            return
+        }
+    }
+
+    /** 通过 LSPosed 的 XSharedPreferences 读取模块配置。 */
+    private fun tryLoadViaXSharedPreferences(): Boolean {
+        return try {
+            val prefs = de.robv.android.xposed.XSharedPreferences("com.wechathook", FILE_NAME)
+            // LSPosed 中 makeWorldReadable 会通过框架确保文件可读
+            try {
+                prefs.makeWorldReadable()
+            } catch (_: Throwable) {}
+            val all = prefs.all ?: return false
+            if (all.isEmpty()) return false
+            for ((k, v) in all) {
+                cache[k] = v
+            }
+            true
+        } catch (_: Throwable) {
+            false
         }
     }
 
@@ -95,7 +117,7 @@ object Prefs {
         } catch (_: Throwable) {}
     }
 
-    /** 持久化当前缓存到 XML 文件（私有目录 + sdcard 双写，私有文件 chmod 644）。 */
+    /** 持久化当前缓存到 XML 文件（标准 SharedPreferences 格式，XSharedPreferences 可解析）。 */
     @Synchronized
     private fun save() {
         runCatching {
@@ -106,12 +128,13 @@ object Prefs {
                 os.write("<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n".toByteArray(utf8))
                 os.write("<map>\n".toByteArray(utf8))
                 for ((k, v) in cache.entries.sortedBy { it.key }) {
-                    when (v) {
-                        is Boolean -> os.write("    <string name=\"$k\" type=\"boolean\">$v</string>\n".toByteArray(utf8))
-                        is Long -> os.write("    <string name=\"$k\" type=\"long\">$v</string>\n".toByteArray(utf8))
-                        is Int -> os.write("    <string name=\"$k\" type=\"int\">$v</string>\n".toByteArray(utf8))
-                        else -> os.write("    <string name=\"$k\">${escape(v?.toString() ?: "")}</string>\n".toByteArray(utf8))
+                    val line = when (v) {
+                        is Boolean -> "    <boolean name=\"$k\" value=\"$v\" />\n"
+                        is Long -> "    <long name=\"$k\" value=\"$v\" />\n"
+                        is Int -> "    <int name=\"$k\" value=\"$v\" />\n"
+                        else -> "    <string name=\"$k\">${escape(v?.toString() ?: "")}</string>\n"
                     }
+                    os.write(line.toByteArray(utf8))
                 }
                 os.write("</map>\n".toByteArray(utf8))
             }
