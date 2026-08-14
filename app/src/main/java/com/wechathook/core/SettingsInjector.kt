@@ -27,21 +27,27 @@ object SettingsInjector {
     private const val KEY_ENTRY = "wechathook_settings_entry"
     private const val TITLE_ENTRY = "WeChatKit 设置"
 
-    // 微信类名（已按 8.0.76 dex 验证）
+    // 微信类名（已按 8.0.71/8.0.76 dex 验证）
     private const val CLS_MAIN_SETTINGS_UI = "com.tencent.mm.plugin.setting.ui.setting_new.MainSettingsUI"
     private const val CLS_SETTINGS_UI = "com.tencent.mm.plugin.setting.ui.setting.SettingsUI"
     private const val CLS_MM_ACTIVITY = "com.tencent.mm.ui.MMActivity"
+    // 8.0.71/8.0.76: MainSettingsUI 走 MVVM 架构 (BaseSettingPrefUI->BaseSettingUI->BaseMvvmActivity->VASActivity),
+    // VASActivity override 了 onCreateOptionsMenu/onPrepareOptionsMenu, 直接 hook MMActivity 的方法不会触发
+    private const val CLS_VAS_ACTIVITY = "com.tencent.mm.ui.vas.VASActivity"
     private const val CLS_ICON_PREFERENCE = "com.tencent.mm.ui.base.preference.IconPreference"
     private const val CLS_PREFERENCE = "com.tencent.mm.ui.base.preference.Preference"
 
     /** 已绑定标志 */
     private val bound = java.util.concurrent.atomic.AtomicBoolean(false)
 
+    /** 浮动按钮是否已注入（防止重复） */
+    private val btnInjected = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /** 在微信主进程调用一次。 */
     fun hook(classLoader: ClassLoader) {
         if (bound.getAndSet(true)) return
 
-        // 1. 新版设置页 (8.0.67+): MainSettingsUI 标题栏菜单注入
+        // 1. 新版设置页 (8.0.67+): MainSettingsUI 菜单/浮动按钮注入
         hookNewSettings(classLoader)
 
         // 2. 旧版设置页兼容: SettingsUI PreferenceScreen 注入
@@ -50,47 +56,113 @@ object SettingsInjector {
         Logger.i("[$TAG] 设置页注入器已挂载")
     }
 
-    // ============ 新版: MainSettingsUI 菜单注入 ============
+    // ============ 新版: MainSettingsUI 注入 ============
 
     private fun hookNewSettings(classLoader: ClassLoader) {
         try {
-            // 验证 MainSettingsUI 存在
-            XposedHelpers.findClass(CLS_MAIN_SETTINGS_UI, classLoader)
-            val clsMMActivity = XposedHelpers.findClass(CLS_MM_ACTIVITY, classLoader)
+            val clsMainSettingsUI = XposedHelpers.findClass(CLS_MAIN_SETTINGS_UI, classLoader)
 
-            // hook MMActivity.onCreateOptionsMenu: 在设置页菜单注入入口
-            XposedBridge.hookAllMethods(clsMMActivity, "onCreateOptionsMenu", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
-                        val activity = param.thisObject
-                        if (activity.javaClass.name != CLS_MAIN_SETTINGS_UI) return
-                        val menu = param.args[0] as? Menu ?: return
-                        if (menu.findItem(MENU_ID_WEKIT) == null) {
-                            menu.add(0, MENU_ID_WEKIT, 0, TITLE_ENTRY)
-                            Logger.i("[$TAG] 已注入新版设置菜单入口")
+            // ---- 方案 A: 标题栏菜单注入（多路: VASActivity 覆盖了菜单方法, MMActivity 兜底） ----
+            val menuClsNames = listOf(CLS_VAS_ACTIVITY, CLS_MM_ACTIVITY)
+            for (clsName in menuClsNames) {
+                val cls = runCatching { XposedHelpers.findClass(clsName, classLoader) }.getOrNull() ?: continue
+                runCatching {
+                    XposedBridge.hookAllMethods(cls, "onCreateOptionsMenu", object : XC_MethodHook() {
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            try {
+                                val activity = param.thisObject as? Activity ?: return
+                                if (activity.javaClass.name != CLS_MAIN_SETTINGS_UI) return
+                                val menu = param.args[0] as? Menu ?: return
+                                if (menu.findItem(MENU_ID_WEKIT) == null) {
+                                    menu.add(0, MENU_ID_WEKIT, 0, TITLE_ENTRY)
+                                    Logger.i("[$TAG] 已注入设置菜单入口 (${clsName})")
+                                }
+                            } catch (_: Throwable) {}
                         }
-                    } catch (_: Throwable) {}
-                }
-            })
-
-            // hook MMActivity.onOptionsItemSelected: 处理点击
-            XposedBridge.hookAllMethods(clsMMActivity, "onOptionsItemSelected", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    try {
-                        val activity = param.thisObject as? Activity ?: return
-                        if (activity.javaClass.name != CLS_MAIN_SETTINGS_UI) return
-                        val item = param.args[0] as? MenuItem ?: return
-                        if (item.itemId == MENU_ID_WEKIT) {
-                            openModuleSettings(activity)
-                            param.result = true
+                    })
+                }.onFailure { }
+                runCatching {
+                    XposedBridge.hookAllMethods(cls, "onPrepareOptionsMenu", object : XC_MethodHook() {
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            try {
+                                val activity = param.thisObject as? Activity ?: return
+                                if (activity.javaClass.name != CLS_MAIN_SETTINGS_UI) return
+                                val menu = param.args[0] as? Menu ?: return
+                                if (menu.findItem(MENU_ID_WEKIT) == null) {
+                                    menu.add(0, MENU_ID_WEKIT, 0, TITLE_ENTRY)
+                                    Logger.i("[$TAG] 已注入设置菜单入口 (${clsName}/prepare)")
+                                }
+                            } catch (_: Throwable) {}
                         }
-                    } catch (_: Throwable) {}
-                }
-            })
+                    })
+                }.onFailure { }
+                runCatching {
+                    XposedBridge.hookAllMethods(cls, "onOptionsItemSelected", object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            try {
+                                val activity = param.thisObject as? Activity ?: return
+                                if (activity.javaClass.name != CLS_MAIN_SETTINGS_UI) return
+                                val item = param.args[0] as? MenuItem ?: return
+                                if (item.itemId == MENU_ID_WEKIT) {
+                                    openModuleSettings(activity)
+                                    param.result = true
+                                }
+                            } catch (_: Throwable) {}
+                        }
+                    })
+                }.onFailure { }
+            }
+            Logger.i("[$TAG] 新版设置页菜单注入已挂载")
 
-            Logger.i("[$TAG] 新版设置页注入成功 (MainSettingsUI)")
+            // ---- 方案 B: 浮动按钮兜底（MVVM 设置页若无系统菜单, 直接注入可见按钮） ----
+            // MainSettingsUI.superImportUIComponents 每次页面创建都会调用（8.0.71/8.0.76 方法名一致）
+            runCatching {
+                XposedBridge.hookAllMethods(clsMainSettingsUI, "superImportUIComponents", object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            val activity = param.thisObject as? Activity ?: return
+                            injectFloatingButton(activity)
+                        } catch (_: Throwable) {}
+                    }
+                })
+                Logger.i("[$TAG] 新版设置页浮动按钮兜底已挂载")
+            }.onFailure { }
         } catch (t: Throwable) {
             Logger.w("[$TAG] 新版设置页注入失败: $t")
+        }
+    }
+
+    /** 往设置页右上角注入一个悬浮入口按钮（不依赖微信菜单系统）。 */
+    private fun injectFloatingButton(activity: Activity) {
+        if (btnInjected.getAndSet(true)) return
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                val decor = activity.window?.decorView as? android.widget.FrameLayout ?: return@post
+                val btn = android.widget.TextView(activity)
+                btn.text = "⚙️"
+                btn.textSize = 16f
+                btn.setTextColor(0xFFFFFFFF.toInt())
+                btn.gravity = android.view.Gravity.CENTER
+                val bg = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(0xE6008577.toInt())
+                }
+                btn.background = bg
+                val pad = (10 * activity.resources.displayMetrics.density).toInt()
+                btn.setPadding(pad, pad, pad, pad)
+                btn.setOnClickListener { openModuleSettings(activity) }
+                val lp = android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                    android.view.Gravity.TOP or android.view.Gravity.END
+                )
+                val m = (8 * activity.resources.displayMetrics.density).toInt()
+                lp.setMargins(0, m, m, 0)
+                decor.addView(btn, lp)
+                Logger.i("[$TAG] 已注入设置页浮动按钮")
+            } catch (t: Throwable) {
+                Logger.w("[$TAG] 注入浮动按钮失败: $t")
+            }
         }
     }
 
