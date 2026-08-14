@@ -131,14 +131,46 @@ object HideAvatarFeature : Feature {
         hookMaskLayoutFallback(classLoader)
     }
 
-    /** 按名称 hook 头像类（复用 [hookAvatarViewClass] 的逻辑）。 */
+    /** 按名称 hook 头像类。 */
     private fun hookAvatarClassByName(className: String, classLoader: ClassLoader, tag: String) {
         runCatching {
             val clazz = XposedHelpers.findClass(className, classLoader)
             Logger.i("[$name] 找到$tag: $className")
 
-            // 构造/测量/设图等"无坐标"时机无法判断方向：
-            // 仅在 mode=all 时直接隐藏，其余模式交由 onLayout 按左右位置判断。
+            // 关键坑：ChattingAvatarImageView 未声明 onLayout/onDraw/onMeasure/setVisibility
+            // 等方法（继承自 AvatarPatTipImageView/ImageView/View），而
+            // hookAllMethods(类, 方法名) 只 hook 该类自己声明的方法 —— 对这些继承方法全是空操作！
+            // 因此必须 hook 基类（View/ImageView）的同名方法，再按类名过滤。
+
+            // ---- 主入口：View.onLayout（所有 View 布局时触发，过滤出头像后按方向判断） ----
+            runCatching {
+                XposedBridge.hookAllMethods(View::class.java, "onLayout", object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            val v = param.thisObject as? View ?: return
+                            if (v.javaClass.name != className) return
+                            applyDirectionalHide(v)
+                        } catch (_: Throwable) {}
+                    }
+                })
+                Logger.i("[$name] 已挂载 View.onLayout 方向判断")
+            }.onFailure { Logger.e("[$name] View.onLayout hook 失败: $it") }
+
+            // ---- 兜底：ImageView.onDraw（每次绘制前触发；view 被重新置为可见时压回） ----
+            runCatching {
+                XposedBridge.hookAllMethods(android.widget.ImageView::class.java, "onDraw", object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        try {
+                            val v = param.thisObject as? View ?: return
+                            if (v.javaClass.name != className) return
+                            applyDirectionalHide(v)
+                        } catch (_: Throwable) {}
+                    }
+                })
+                Logger.i("[$name] 已挂载 ImageView.onDraw 兜底")
+            }.onFailure { Logger.e("[$name] ImageView.onDraw hook 失败: $it") }
+
+            // ---- 构造后：mode=all 时立即隐藏（无坐标无法判断方向） ----
             runCatching {
                 XposedBridge.hookAllConstructors(clazz, object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
@@ -148,80 +180,19 @@ object HideAvatarFeature : Feature {
                         } catch (_: Throwable) {}
                     }
                 })
-            }
-            XposedBridge.hookAllMethods(clazz, "onMeasure", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    try {
-                        val v = param.thisObject as? View ?: return
-                        if (mode() == "all") {
-                            hideAvatarView(v)
-                            v.visibility = View.GONE
-                            param.setResult(null)
-                            runCatching {
-                                val m = View::class.java.getDeclaredMethod("setMeasuredDimension", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-                                m.isAccessible = true
-                                m.invoke(v, 0, 0)
-                            }
-                        }
-                    } catch (_: Throwable) {}
-                }
-            })
-            XposedBridge.hookAllMethods(clazz, "onAttachedToWindow", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
-                        val v = param.thisObject as? View ?: return
-                        if (mode() == "all") hideAvatarView(v)
-                    } catch (_: Throwable) {}
-                }
-            })
-            XposedBridge.hookAllMethods(clazz, "setVisibility", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
-                        val v = param.thisObject as? View ?: return
-                        if (mode() == "all") hideAvatarView(v)
-                    } catch (_: Throwable) {}
-                }
-            })
-            XposedBridge.hookAllMethods(clazz, "setImageBitmap", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    try {
-                        val v = param.thisObject as? View ?: return
-                        if (mode() == "all") {
-                            hideAvatarView(v)
-                            param.setResult(null)
-                        }
-                    } catch (_: Throwable) {}
-                }
-            })
-            XposedBridge.hookAllMethods(clazz, "setImageResource", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    try {
-                        val v = param.thisObject as? View ?: return
-                        if (mode() == "all") hideAvatarView(v)
-                    } catch (_: Throwable) {}
-                }
-            })
-            XposedBridge.hookAllMethods(clazz, "onDraw", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    try {
-                        val v = param.thisObject as? View ?: return
-                        // onDraw 时头像必有有效坐标：作为方向判断的兜底
-                        // （view 被微信重新 setVisibility(VISIBLE) 后，onLayout 不一定触发，onDraw 一定触发）
-                        applyDirectionalHide(v)
-                    } catch (_: Throwable) {}
-                }
-            })
+            }.onFailure { }
 
-            // 核心：onLayout 时头像已有坐标 —— 按左右位置判断方向，
-            // 支持"只隐藏对方 / 只隐藏自己 / 全部隐藏"，同时应用消息间距。
-            XposedBridge.hookAllMethods(clazz, "onLayout", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
-                        val v = param.thisObject as? View ?: return
-                        applyDirectionalHide(v)
-                    } catch (_: Throwable) {}
-                }
-            })
+            // ---- onVisibilityChanged（ChattingAvatarImageView 自己声明的方法）：mode=all 压回 ----
+            runCatching {
+                XposedBridge.hookAllMethods(clazz, "onVisibilityChanged", object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            val v = param.thisObject as? View ?: return
+                            if (mode() == "all") hideAvatarView(v)
+                        } catch (_: Throwable) {}
+                    }
+                })
+            }.onFailure { }
 
             Logger.i("[$name] 已 Hook $tag: $className")
         }.onFailure { Logger.e("[$name] $tag Hook 失败: $it") }
