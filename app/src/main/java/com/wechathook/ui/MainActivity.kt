@@ -51,9 +51,18 @@ class MainActivity : AppCompatActivity() {
         root.addView(card(
             "💬 基础功能",
             listOf(
-                SwitchItem("隐藏消息头像（紧凑）",
-                    "只去左右头像，气泡间距与微信原版一致",
-                    "feat_${HideAvatarFeature.key}", HideAvatarFeature.defaultEnabled()),
+                SwitchItem("隐藏消息头像",
+                    "齿轮里选择隐藏对象，可调消息间距",
+                    "feat_${HideAvatarFeature.key}", HideAvatarFeature.defaultEnabled(),
+                    params = listOf(
+                        ParamItem("隐藏头像范围", "hide_avatar_mode",
+                            type = "choice",
+                            options = listOf("隐藏对方", "隐藏自己", "全部隐藏"),
+                            optionValues = listOf("incoming", "outgoing", "all")),
+                        ParamItem("消息上下间距", "chat_item_spacing",
+                            type = "seekbar", min = 0, max = 30, step = 1,
+                            supporting = "0 = 微信默认间距")
+                    )),
                 SwitchItem("聊天防撤回",
                     "对方撤回的消息保留显示",
                     "feat_${AntiRecallFeature.key}", AntiRecallFeature.defaultEnabled(),
@@ -164,8 +173,18 @@ class MainActivity : AppCompatActivity() {
     data class ParamItem(
         val label: String,
         val prefKey: String,
-        val hint: String,
-        val supporting: String = ""
+        val hint: String = "",
+        val supporting: String = "",
+        /** 控件类型：text 输入框 / choice 单选 / seekbar 滑块 */
+        val type: String = "text",
+        /** choice 的显示文案列表 */
+        val options: List<String> = emptyList(),
+        /** choice 对应的存储值（缺省用 options 本身） */
+        val optionValues: List<String> = emptyList(),
+        /** seekbar 范围 */
+        val min: Int = 0,
+        val max: Int = 100,
+        val step: Int = 1
     )
 
     data class SwitchItem(
@@ -252,22 +271,125 @@ class MainActivity : AppCompatActivity() {
         return row
     }
 
-    /** 齿轮弹窗：调对应功能的数值参数。 */
+    /** 齿轮弹窗：调对应功能的数值参数（Material3 风格）。 */
     private fun showParamDialog(title: String, params: List<ParamItem>) {
+        val content = MaterialCardView(this).apply {
+            radius = dp(20).toFloat()
+            cardElevation = 0f
+            setCardBackgroundColor(0xFFF5F5F5.toInt())
+        }
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(8), dp(24), dp(4))
+            setPadding(dp(16), dp(8), dp(16), dp(8))
         }
-        params.forEach { p ->
-            col.addView(textInputLabel(p.label))
-            col.addView(textInput(p.prefKey, p.hint, p.supporting))
+        params.forEachIndexed { idx, p ->
+            if (idx > 0) {
+                col.addView(View(this).apply {
+                    setBackgroundColor(0xFFE0E0E0.toInt())
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                        topMargin = dp(10); bottomMargin = dp(10)
+                    }
+                })
+            }
+            when (p.type) {
+                "choice" -> col.addView(choiceGroup(p))
+                "seekbar" -> col.addView(seekBarRow(p))
+                else -> {
+                    col.addView(textInputLabel(p.label))
+                    col.addView(textInput(p.prefKey, p.hint, p.supporting))
+                }
+            }
         }
-        val scroll = ScrollView(this).apply { addView(col) }
-        android.app.AlertDialog.Builder(this)
-            .setTitle("$title · 参数")
+        content.addView(col)
+        val scroll = ScrollView(this).apply { addView(content) }
+
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("⚙️ $title")
             .setView(scroll)
             .setPositiveButton("完成", null)
             .show()
+    }
+
+    /** 单选组（Material 风格），选中即保存。 */
+    private fun choiceGroup(p: ParamItem): LinearLayout {
+        val values = if (p.optionValues.isNotEmpty()) p.optionValues else p.options
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(textInputLabel(p.label))
+        val current = Prefs.getString(p.prefKey, values.firstOrNull() ?: "")
+        val rg = android.widget.RadioGroup(this).apply { setPadding(0, dp(2), 0, 0) }
+        p.options.forEachIndexed { i, label ->
+            val rb = com.google.android.material.radiobutton.MaterialRadioButton(this).apply {
+                this.text = label
+                textSize = 15f
+                setTextColor(0xFF1F1F1F.toInt())
+                setPadding(dp(4), dp(6), dp(4), dp(6))
+                isChecked = (values.getOrNull(i) ?: label) == current
+            }
+            rb.setOnClickListener {
+                Prefs.setString(p.prefKey, values.getOrNull(i) ?: label)
+            }
+            rg.addView(rb, android.widget.RadioGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        col.addView(rg)
+        if (p.supporting.isNotEmpty()) {
+            col.addView(TextView(this).apply {
+                text = p.supporting
+                textSize = 11f
+                setTextColor(0xFF9E9E9E.toInt())
+                setPadding(dp(4), dp(2), 0, 0)
+            })
+        }
+        return col
+    }
+
+    /** 滑块行：SeekBar + 实时数值显示，拖动即保存。 */
+    private fun seekBarRow(p: ParamItem): LinearLayout {
+        val current = Prefs.getInt(p.prefKey, 0).coerceIn(p.min, p.max)
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(10), 0, dp(2))
+        }
+        head.addView(TextView(this).apply {
+            text = p.label
+            textSize = 13f
+            setTextColor(0xFF757575.toInt())
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val valueTv = TextView(this).apply {
+            text = "$current"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFF00897B.toInt())
+        }
+        head.addView(valueTv)
+        col.addView(head)
+
+        val sb = android.widget.SeekBar(this).apply {
+            max = (p.max - p.min) / p.step
+            progress = (current - p.min) / p.step
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seek: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                    val v = p.min + progress * p.step
+                    valueTv.text = "$v"
+                    Prefs.setInt(p.prefKey, v)
+                }
+                override fun onStartTrackingTouch(seek: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(seek: android.widget.SeekBar?) {}
+            })
+        }
+        col.addView(sb)
+        if (p.supporting.isNotEmpty()) {
+            col.addView(TextView(this).apply {
+                text = p.supporting
+                textSize = 11f
+                setTextColor(0xFF9E9E9E.toInt())
+                setPadding(dp(4), dp(2), 0, 0)
+            })
+        }
+        return col
     }
 
     /** 参数输入卡片。 */

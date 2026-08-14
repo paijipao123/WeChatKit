@@ -45,17 +45,34 @@ object HideAvatarFeature : Feature {
 
     override fun isProcessSafe() = false
 
-    private val enable: Boolean
-        get() = Prefs.getBoolean("hide_avatar_enable", true)
+    /**
+     * 隐藏范围模式：
+     * - "incoming" 只隐藏对方（默认）
+     * - "outgoing" 只隐藏自己
+     * - "all"      全部隐藏
+     * - "off"      关闭
+     * 兼容旧配置 hide_avatar_enable / hide_avatar_outgoing。
+     */
+    private fun mode(): String {
+        if (!Prefs.getBoolean("feat_hide_avatar", true)) return "off"
+        val m = Prefs.getString("hide_avatar_mode", "")
+        if (m.isNotEmpty()) return m
+        return when {
+            !Prefs.getBoolean("hide_avatar_enable", true) -> "off"
+            Prefs.getBoolean("hide_avatar_outgoing", false) -> "all"
+            else -> "incoming"
+        }
+    }
 
-    // 是否隐藏自己发出的消息的头像（默认只隐藏对方）
-    private val hideOutgoing: Boolean
-        get() = Prefs.getBoolean("hide_avatar_outgoing", false)
+    /** 消息上下间距（dp），0 = 不调整。 */
+    private val itemSpacing: Int
+        get() = Prefs.getInt("chat_item_spacing", 0).coerceIn(0, 60)
 
     override fun hook(classLoader: ClassLoader, finder: DexKitFinder?) {
-        if (!enable) return
+        val m = mode()
+        if (m == "off" && itemSpacing <= 0) return
 
-        Logger.i("[$name] 开始 Hook")
+        Logger.i("[$name] 开始 Hook (mode=$m, spacing=$itemSpacing dp)")
         SymbolResolver.detectWechatVersion()
         Logger.i("[$name] 微信版本: ${SymbolResolver.wechatVersionName}")
 
@@ -120,12 +137,14 @@ object HideAvatarFeature : Feature {
             val clazz = XposedHelpers.findClass(className, classLoader)
             Logger.i("[$name] 找到$tag: $className")
 
+            // 构造/测量/设图等"无坐标"时机无法判断方向：
+            // 仅在 mode=all 时直接隐藏，其余模式交由 onLayout 按左右位置判断。
             runCatching {
                 XposedBridge.hookAllConstructors(clazz, object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
                             val v = param.thisObject as? View ?: return
-                            hideAvatarView(v)
+                            if (mode() == "all") hideAvatarView(v)
                         } catch (_: Throwable) {}
                     }
                 })
@@ -134,13 +153,15 @@ object HideAvatarFeature : Feature {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
-                        hideAvatarView(v)
-                        v.visibility = View.GONE
-                        param.setResult(null)
-                        runCatching {
-                            val m = View::class.java.getDeclaredMethod("setMeasuredDimension", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-                            m.isAccessible = true
-                            m.invoke(v, 0, 0)
+                        if (mode() == "all") {
+                            hideAvatarView(v)
+                            v.visibility = View.GONE
+                            param.setResult(null)
+                            runCatching {
+                                val m = View::class.java.getDeclaredMethod("setMeasuredDimension", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                                m.isAccessible = true
+                                m.invoke(v, 0, 0)
+                            }
                         }
                     } catch (_: Throwable) {}
                 }
@@ -149,7 +170,7 @@ object HideAvatarFeature : Feature {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
-                        hideAvatarView(v)
+                        if (mode() == "all") hideAvatarView(v)
                     } catch (_: Throwable) {}
                 }
             })
@@ -157,7 +178,7 @@ object HideAvatarFeature : Feature {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
-                        hideAvatarView(v)
+                        if (mode() == "all") hideAvatarView(v)
                     } catch (_: Throwable) {}
                 }
             })
@@ -165,8 +186,10 @@ object HideAvatarFeature : Feature {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
-                        hideAvatarView(v)
-                        param.setResult(null)
+                        if (mode() == "all") {
+                            hideAvatarView(v)
+                            param.setResult(null)
+                        }
                     } catch (_: Throwable) {}
                 }
             })
@@ -174,7 +197,7 @@ object HideAvatarFeature : Feature {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
-                        hideAvatarView(v)
+                        if (mode() == "all") hideAvatarView(v)
                     } catch (_: Throwable) {}
                 }
             })
@@ -182,12 +205,78 @@ object HideAvatarFeature : Feature {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? View ?: return
-                        if (v.visibility == View.VISIBLE) v.visibility = View.GONE
+                        if (mode() == "all" && v.visibility == View.VISIBLE) v.visibility = View.GONE
                     } catch (_: Throwable) {}
                 }
             })
+
+            // 核心：onLayout 时头像已有坐标 —— 按左右位置判断方向，
+            // 支持"只隐藏对方 / 只隐藏自己 / 全部隐藏"，同时应用消息间距。
+            XposedBridge.hookAllMethods(clazz, "onLayout", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val v = param.thisObject as? View ?: return
+                        applyDirectionalHide(v)
+                    } catch (_: Throwable) {}
+                }
+            })
+
             Logger.i("[$name] 已 Hook $tag: $className")
         }.onFailure { Logger.e("[$name] $tag Hook 失败: $it") }
+    }
+
+    /**
+     * 方向感知隐藏：头像已布局（有坐标）时，
+     * 按头像中心相对消息 item 的水平位置判断方向（左=对方，右=自己），
+     * 再按模式决定是否隐藏；同时把消息间距应用到 item 根。
+     */
+    private fun applyDirectionalHide(v: View) {
+        val m = mode()
+        if (m == "off") return
+
+        val itemRoot = findItemRoot(v)
+        if (itemRoot != null) {
+            applyItemSpacing(itemRoot)
+            if (m == "all") {
+                hideAvatarView(v)
+                return
+            }
+            val cx = v.left + v.width / 2f
+            val isLeft = cx <= itemRoot.width / 2f
+            val hide = if (m == "incoming") isLeft else !isLeft
+            if (hide) hideAvatarView(v)
+        } else {
+            // 找不到 item 根：保守隐藏（避免漏掉头像）
+            if (m == "all") hideAvatarView(v)
+        }
+    }
+
+    /** 向上找消息 item 根 View（RecyclerView 的直接子 View）。 */
+    private fun findItemRoot(v: View): View? {
+        var cur: android.view.ViewParent? = v.parent
+        var guard = 0
+        while (cur is View && guard < 10) {
+            val pp = cur.parent
+            if (pp is androidx.recyclerview.widget.RecyclerView) return cur
+            cur = pp
+            guard++
+        }
+        return null
+    }
+
+    /** 把配置的消息间距（dp）应用到 item 根 View 的上下 margin。 */
+    private fun applyItemSpacing(itemRoot: View) {
+        val sp = itemSpacing
+        if (sp <= 0) return
+        runCatching {
+            val lp = itemRoot.layoutParams
+            if (lp is ViewGroup.MarginLayoutParams) {
+                val px = (sp * android.content.res.Resources.getSystem().displayMetrics.density).toInt()
+                lp.topMargin = px
+                lp.bottomMargin = px
+                itemRoot.layoutParams = lp
+            }
+        }
     }
 
     /** 直接 hook 微信头像 View 类。 */
@@ -239,11 +328,16 @@ object HideAvatarFeature : Feature {
                 Logger.w("[$name] holder 中未找到 View (holder=${holder.javaClass.name})")
                 return
             }
+            // 消息间距（独立于头像模式，绑定阶段应用一次即可）
+            applyItemSpacing(holderView)
             // 调试：前 5 次打印消息 View 树结构（帮助定位头像真实位置）
             if (debugDumpCount.getAndIncrement() < 5) {
                 dumpViewTree(holderView)
             }
-            hideAvatarIn(holderView)
+            // 全部隐藏模式：绑定阶段直接隐藏；仅隐藏对方/自己交给 onLayout 方向判断
+            if (mode() == "all") {
+                hideAvatarIn(holderView)
+            }
         } catch (t: Throwable) {
             Logger.e("[$name] applyHide 异常: $t")
         }
