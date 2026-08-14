@@ -43,6 +43,9 @@ object AntiMomentsDeleteFeature : Feature {
     // 朋友圈数据库在微信主进程；子进程一般不做数据库写入，标记为安全即可
     override fun isProcessSafe() = true
 
+    // 直接 hook 固定类名 (WCDB SQLiteDatabase)，不依赖 DexKit 动态定位
+    override fun needsDexKit() = false
+
     override fun hook(classLoader: ClassLoader, finder: DexKitFinder?) {
         if (!enable) return
 

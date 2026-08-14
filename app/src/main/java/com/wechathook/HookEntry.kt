@@ -68,10 +68,23 @@ class HookEntry : IXposedHookLoadPackage {
             return
         }
 
-        // 主进程：用 DexKitFinder 包裹，在其生命期内完成微信内部符号定位并注册 hook。
+        // 主进程：
+        // 1) 先运行不依赖 DexKit 的功能（直接 hook 固定类名），即使 DexKit 失败也能生效；
+        // 2) 再用 DexKitFinder 包裹，运行需要动态定位的功能。
         Logger.i("主进程：开始加载功能 ${enabledFeatures.map { it.name }}")
+
+        // 不依赖 DexKit 的（如朋友圈防删）
+        enabledFeatures.filterNot { it.needsDexKit() }.forEach { feature ->
+            runCatching { feature.hook(lpparam.classLoader, null) }
+                .onFailure { Logger.e("加载功能 ${feature.name} 失败: $it", it) }
+        }
+
+        // 依赖 DexKit 的（去头像/防撤回/红包/转账/已读）
+        val dexFeatures = enabledFeatures.filter { it.needsDexKit() }
+        if (dexFeatures.isEmpty()) return
+
         DexKitFinder.with(lpparam.classLoader) { finder ->
-            enabledFeatures.forEach { feature ->
+            dexFeatures.forEach { feature ->
                 runCatching { feature.hook(lpparam.classLoader, finder) }
                     .onFailure { Logger.e("加载功能 ${feature.name} 失败: $it", it) }
             }

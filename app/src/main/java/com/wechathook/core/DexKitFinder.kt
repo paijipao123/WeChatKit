@@ -17,6 +17,83 @@ class DexKitFinder internal constructor(
 ) {
 
     companion object {
+
+        private val nativeLoaded = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /**
+         * 加载 DexKit 的 native 库 (libdexkit.so)。
+         *
+         * LSPosed 把模块注入宿主进程时，模块 APK 里的 .so 不一定在默认 native 搜索路径中，
+         * 直接 create bridge 会抛 UnsatisfiedLinkError。这里分两步：
+         * 1. 先试 System.loadLibrary("dexkit")（LSPosed 若已暴露 native 路径则直接成功）；
+         * 2. 失败则从模块 APK 中提取 lib/<abi>/libdexkit.so 到宿主可写缓存目录后 System.load。
+         */
+        @JvmStatic
+        fun loadNativeLibrary(): Boolean {
+            if (nativeLoaded.get()) return true
+            return try {
+                System.loadLibrary("dexkit")
+                nativeLoaded.set(true)
+                true
+            } catch (e1: Throwable) {
+                try {
+                    extractAndLoadDexKit()
+                } catch (e2: Throwable) {
+                    Logger.w("DexKitFinder: 加载 libdexkit.so 失败: $e2")
+                    false
+                }
+            }
+        }
+
+        private fun extractAndLoadDexKit(): Boolean {
+            // 1. 从 DexKitBridge 类的 CodeSource 拿模块 APK 路径
+            val apkPath = try {
+                DexKitBridge::class.java.protectionDomain
+                    ?.codeSource?.location?.toURI()?.path
+                    ?: return false
+            } catch (_: Throwable) {
+                return false
+            }
+
+            // 2. 选择 ABI 对应的 so 条目名
+            val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: return false
+            val entryName = "lib/$abi/libdexkit.so"
+
+            // 3. 解压到宿主缓存目录
+            val outDir = hostCacheDir() ?: return false
+            val outFile = java.io.File(outDir, "libdexkit.so")
+            try {
+                java.util.zip.ZipFile(apkPath).use { zip ->
+                    val entry = zip.getEntry(entryName) ?: return false
+                    zip.getInputStream(entry).use { input ->
+                        outFile.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
+                outFile.setExecutable(true)
+                System.load(outFile.absolutePath)
+                nativeLoaded.set(true)
+                Logger.i("DexKitFinder: 已从 $apkPath 提取并加载 libdexkit.so")
+                true
+            } catch (t: Throwable) {
+                Logger.w("DexKitFinder: 提取/加载 so 失败: $t")
+                false
+            }
+        }
+
+        /** 拿到宿主进程可写目录（优先 cacheDir，退回 /data/local/tmp）。 */
+        private fun hostCacheDir(): java.io.File? {
+            return try {
+                val at = Class.forName("android.app.ActivityThread")
+                val app = at.getMethod("currentApplication").invoke(null) as? android.app.Application
+                app?.cacheDir
+            } catch (_: Throwable) {
+                null
+            } ?: run {
+                val tmp = java.io.File("/data/local/tmp")
+                if (tmp.exists() || tmp.mkdirs()) tmp else null
+            }
+        }
+
         /**
          * 创建并使用 DexKitBridge。
          * 微信的 dex 可能经过 MemoryDex 加载，[useMemoryDexFile] 设为 true 可同时检查内存 dex。
@@ -27,6 +104,10 @@ class DexKitFinder internal constructor(
             useMemoryDexFile: Boolean = true,
             block: (DexKitFinder) -> Unit
         ) {
+            if (!loadNativeLibrary()) {
+                Logger.w("DexKitFinder: native 库加载失败，跳过 DexKit 相关功能")
+                return
+            }
             runCatching {
                 DexKitBridge.create(classLoader, useMemoryDexFile)
             }.onSuccess { bridge ->

@@ -28,4 +28,11 @@ interface Feature {
      * 依赖 DexKit 主进程桥接或 UI 的功能应返回 false。
      */
     fun isProcessSafe(): Boolean = false
+
+    /**
+     * 该功能是否依赖 DexKit 动态定位。
+     * 依赖 DexKit 的功能只在 DexKit 可用（主进程且 native 库加载成功）时运行；
+     * 不依赖的（如朋友圈防删，直接 hook 固定类名）即使在 DexKit 失败时也可运行。
+     */
+    fun needsDexKit(): Boolean = true
 }
