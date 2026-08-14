@@ -116,8 +116,15 @@ object AutoCollectTransferFeature : Feature {
     }
 
     /** 自动发起确认收款请求。 */
-    private fun collectAsync(msgId: String, content: String) {
+    private fun collectAsync(msgId: String, content0: String) {
         val loader = hostLoader ?: return
+
+        // 处理 content: 去掉可能的 URL 编码前缀（如 "wxid:..." 或 "http://..." 形式）
+        var content = content0
+        if (!content.startsWith("<") && content.contains(":")) {
+            val idx = content.indexOf(":")
+            content = content.substring(idx + 1).trim()
+        }
 
         Thread {
             try {
