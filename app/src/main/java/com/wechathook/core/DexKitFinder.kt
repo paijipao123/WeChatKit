@@ -113,13 +113,22 @@ class DexKitFinder internal constructor(
                 val pathList = de.robv.android.xposed.XposedHelpers.getObjectField(cl, "pathList")
                 val dexElements = de.robv.android.xposed.XposedHelpers.getObjectField(pathList, "dexElements") as Array<*>
                 for (el in dexElements) {
-                    val zip = de.robv.android.xposed.XposedHelpers.getObjectField(el, "zip")
-                    if (zip != null) {
-                        val path = de.robv.android.xposed.XposedHelpers.getObjectField(zip, "path") as? String
-                        if (path != null && path.contains("wechathook")) {
-                            Logger.i("DexKitFinder: 通过 classloader 找到模块 APK: $path")
-                            return path
-                        }
+                    // Android 版本不同 Element 字段不同：新版用 path，旧版用 zip
+                    var path: String? = null
+                    try {
+                        path = de.robv.android.xposed.XposedHelpers.getObjectField(el, "path") as? String
+                    } catch (_: Throwable) {}
+                    if (path == null) {
+                        try {
+                            val zip = de.robv.android.xposed.XposedHelpers.getObjectField(el, "zip")
+                            if (zip != null) {
+                                path = de.robv.android.xposed.XposedHelpers.getObjectField(zip, "path") as? String
+                            }
+                        } catch (_: Throwable) {}
+                    }
+                    if (path != null && path.contains("wechathook")) {
+                        Logger.i("DexKitFinder: 通过 classloader 找到模块 APK: $path")
+                        return path
                     }
                 }
             } catch (t: Throwable) {

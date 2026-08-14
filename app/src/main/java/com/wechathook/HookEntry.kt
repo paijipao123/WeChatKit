@@ -100,18 +100,15 @@ class HookEntry : IXposedHookLoadPackage {
         lpparam: XC_LoadPackage.LoadPackageParam,
         dexFeatures: List<Feature>
     ) {
+        // 微信不同版本的主 Application 类名可能不同（8.0.71 已不是 MMApplication），
+        // 直接 hook 基类 android.app.Application.onCreate：所有 Application 子类都会触发。
         runCatching {
-            // 微信主 Application 类（8.0.x 均为 com.tencent.mm.app.MMApplication，
-            // 失败时退化为 hook 所有 Application 子类的 onCreate）
-            val appClass = XposedHelpers.findClass(
-                "com.tencent.mm.app.MMApplication", lpparam.classLoader
-            )
-            XposedBridge.hookAllMethods(appClass, "onCreate", object : XC_MethodHook() {
+            XposedBridge.hookAllMethods(android.app.Application::class.java, "onCreate", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     loadDexFeatures(lpparam, dexFeatures)
                 }
             })
-            Logger.i("已挂载 MMApplication.onCreate 延迟加载")
+            Logger.i("已挂载 Application.onCreate 延迟加载")
         }.onFailure {
             Logger.e("挂载 Application.onCreate 失败: $it")
             // 兜底：直接尝试加载（若 ActivityThread 已有 app 也能成功）
