@@ -83,10 +83,10 @@ class DexKitFinder internal constructor(
                 System.load(outFile.absolutePath)
                 nativeLoaded.set(true)
                 Logger.i("DexKitFinder: 已从 $apkPath 提取并加载 libdexkit.so")
-                true
+                return true
             } catch (t: Throwable) {
                 Logger.w("DexKitFinder: 提取/加载 so 失败: $t")
-                false
+                return false
             }
         }
 
