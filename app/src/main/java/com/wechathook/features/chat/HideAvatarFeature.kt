@@ -35,6 +35,9 @@ object HideAvatarFeature : Feature {
     /** 微信 8.0.7x 消息头像类（固定名）。 */
     private const val AVATAR_VIEW_CLASS = "com.tencent.mm.ui.chatting.view.ChattingAvatarImageView"
 
+    /** 另一个头像类（部分界面使用）。 */
+    private const val AVATAR_VIEW_CLASS2 = "com.tencent.mm.ui.chatting.view.AvatarImageView"
+
     private val maskLayoutClass = "com.tencent.mm.ui.base.MaskLayout"
 
     override fun defaultEnabled() = true
@@ -53,8 +56,9 @@ object HideAvatarFeature : Feature {
 
         Logger.i("[$name] 开始 Hook")
 
-        // ---- 主策略：直接 hook ChattingAvatarImageView ----
+        // ---- 主策略：直接 hook 微信头像 View 类 ----
         hookAvatarViewClass(classLoader)
+        hookAvatarViewClass2(classLoader)
 
         // ---- 辅助 1：消息 item onBindView 遍历隐藏 ----
         if (finder != null) {
@@ -188,6 +192,46 @@ object HideAvatarFeature : Feature {
         }
 
         Logger.i("[$name] 已隐藏头像: ${v.javaClass.name}")
+    }
+
+    /** Hook 第二个头像类（AvatarImageView）。 */
+    private fun hookAvatarViewClass2(classLoader: ClassLoader) {
+        runCatching {
+            val clazz = XposedHelpers.findClass(AVATAR_VIEW_CLASS2, classLoader)
+            Logger.i("[$name] 找到头像类2: $AVATAR_VIEW_CLASS2")
+            XposedBridge.hookAllConstructors(clazz, object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val v = param.thisObject as? View ?: return
+                        hideAvatarView(v)
+                    } catch (_: Throwable) {}
+                }
+            })
+            XposedBridge.hookAllMethods(clazz, "onMeasure", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        val v = param.thisObject as? View ?: return
+                        hideAvatarView(v)
+                        v.visibility = View.GONE
+                        param.result = Unit
+                        runCatching {
+                            val m = View::class.java.getDeclaredMethod("setMeasuredDimension", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                            m.isAccessible = true
+                            m.invoke(v, 0, 0)
+                        }
+                    } catch (_: Throwable) {}
+                }
+            })
+            XposedBridge.hookAllMethods(clazz, "setVisibility", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val v = param.thisObject as? View ?: return
+                        hideAvatarView(v)
+                    } catch (_: Throwable) {}
+                }
+            })
+            Logger.i("[$name] 已 Hook 头像类2")
+        }.onFailure { Logger.e("[$name] 头像类2 Hook 失败: $it") }
     }
 
     private fun hookClass(className: String, classLoader: ClassLoader) {
