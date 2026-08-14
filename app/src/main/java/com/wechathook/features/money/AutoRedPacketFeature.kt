@@ -197,7 +197,16 @@ object AutoRedPacketFeature : Feature {
     }
 
     private fun handleReceiveEnd(param: XC_MethodHook.MethodHookParam) {
-        // 从回调参数里取 sendId 并不直观；这里使用最近一次拆包 sendId 开包。
+        // 从拆包成功回调的 JSON 响应里提取 timingIdentifier（开包必需）
+        var timingIdentifier = ""
+        runCatching {
+            val json = param.args.getOrNull(2) as? org.json.JSONObject
+            if (json != null) {
+                timingIdentifier = json.optString("timingIdentifier")
+                Logger.i("[$name] 拆包回调 timingIdentifier=$timingIdentifier")
+            }
+        }
+
         val info = redPackets.entries.lastOrNull()?.value ?: return
         val sendId = info["sendId"] ?: return
         val msgType = info["msgType"]?.toIntOrNull() ?: 1
@@ -215,11 +224,11 @@ object AutoRedPacketFeature : Feature {
                 // OpenLuckyMoney 构造：(msgType, channelId, sendId, nativeUrl, headImg, nickName, talker, ver, timingIdentifier, ...)
                 val request = XposedHelpers.newInstance(
                     cls, msgType, channelId, sendId, nativeUrl,
-                    headImg, nickName, talker, "v1.0", "", ""
+                    headImg, nickName, talker, "v1.0", timingIdentifier, ""
                 )
                 WeChatNetwork.sendNetScene(request)
                 redPackets.remove(sendId)
-                Logger.i("[$name] 开包请求已发送 $sendId")
+                Logger.i("[$name] 开包请求已发送 $sendId (timingIdentifier=$timingIdentifier)")
             }.onFailure { Logger.e("[$name] 开包失败 $it") }
         }.start()
     }
