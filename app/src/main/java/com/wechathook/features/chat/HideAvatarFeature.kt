@@ -20,11 +20,14 @@ import java.util.WeakHashMap
  * 关键技巧（参考 WeKit/WAuxiliary）：
  * 微信消息项里带头像的容器是 `com.tencent.mm.ui.base.MaskLayout`（固定 52dp）。
  * 如果简单地把整行头像设成 GONE，在 RelativeLayout 布局的消息里，右侧气泡会被
- * 向左吸附导致出现一大片空隙（这正是你要修的问题）。正确做法是：**保留 MaskLayout
- * 但把它的宽度收紧为 0**——这样锚点数据不失效、气泡位置紧凑，视觉上如同没有头像。
+ * 向左吸附导致出现一大片空隙。正确做法是：**保留 MaskLayout 但把它的宽度收紧为 0**——
+ * 锚点不失效、气泡位置紧凑，视觉上如同没有头像。
  *
- * Hook 点：消息 item 的 onBindView（MVVM 聊天项适配器），在每次绑定后处理头像宽度。
- * 通过 DexKit 用特征字符串定位，适配尽量多的微信版本。
+ * 实现（多层策略，适配 8.0.x 不同版本）：
+ * 1. hook 消息 item 的 onBindView（DexKit 特征定位），after 中从 holder 反射找
+ *    `avatarIV` 字段（微信 8.0.7x 消息 item 的标准头像字段名），收窄其父容器宽度；
+ * 2. 遍历 View 树找 MaskLayout+ImageView 的头像容器收窄（兜底）；
+ * 3. 直接 hook MaskLayout.setMask/onMeasure（最终兜底）。
  */
 object HideAvatarFeature : Feature {
 
@@ -43,7 +46,7 @@ object HideAvatarFeature : Feature {
     private val enable: Boolean
         get() = Prefs.getBoolean("hide_avatar_enable", true)
 
-    // 保留一个可选的"也隐藏自己发出消息的头像"
+    // 是否隐藏自己发出的消息的头像（默认只隐藏对方）
     private val hideOutgoing: Boolean
         get() = Prefs.getBoolean("hide_avatar_outgoing", false)
 
@@ -54,24 +57,19 @@ object HideAvatarFeature : Feature {
         Logger.i("[$name] 开始 Hook")
 
         val targetClassNames = finder.findClassNamesByStrings("MicroMsg.MvvmChattingItem", "[onBindView]")
-
         if (targetClassNames.isEmpty()) {
             Logger.w("[$name] 未定位到消息 item 类，尝试按类名兜底查找。")
-            // 兜底：搜索所有含 onBindView 方法且包含 MvvmChattingItem 特征的类
             val looser = finder.findClassNamesByStrings("MvvmChattingItem", "onBindView")
             if (looser.isEmpty()) {
-                Logger.e("[$name] 无法定位消息 item，该功能不可用（微信版本可能过新/已混淆）。")
+                Logger.e("[$name] 无法定位消息 item，该功能不可用。")
                 return
             }
             hookClass(looser.first(), classLoader)
-            return
+        } else {
+            Logger.i("[$name] 定位到 ${targetClassNames.size} 个消息 item 类: $targetClassNames")
+            targetClassNames.forEach { hookClass(it, classLoader) }
         }
 
-        Logger.i("[$name] 定位到 ${targetClassNames.size} 个消息 item 类: $targetClassNames")
-        targetClassNames.forEach { hookClass(it, classLoader) }
-
-        // 额外：微信旧版本消息 item 位于 com.tencent.mm.ui.chatting.view 下的 adapter，
-        // 直接 hook MaskLayout 的 onMeasure 作为最终兜底（不区分具体项，仅对带头像的容器生效）。
         hookMaskLayoutFallback(classLoader)
     }
 
@@ -89,83 +87,144 @@ object HideAvatarFeature : Feature {
 
     private fun applyHide(param: XC_MethodHook.MethodHookParam) {
         try {
-            // 第一个参数常用作消息项 holder/container
+            // 第一个参数常用作消息项 holder
             val holder = param.args[0] ?: return
-            val holderView = if (holder is View) holder else Reflect.findFieldByType(holder, View::class.java) as? View
-            val view = holderView ?: return
-
-            // 判断是否自己发的消息（不展开处理，仅按配置）
-            // 这里以简单策略：本实现默认对收到的消息去头像，自己发的可选。
-            val msgInfoHolder = holder
-            // 若是自己发送且未开启 hideOutgoing，则跳过 -> 简化处理：仅当容器里 avatarIV 存在故按配置。
-            hideAvatarIn(view)
+            val holderView = holderToView(holder)
+            if (holderView == null) {
+                Logger.w("[$name] holder 中未找到 View (holder=${holder.javaClass.name})")
+                return
+            }
+            hideAvatarIn(holderView)
         } catch (t: Throwable) {
-            // 忽略单个消息项异常，避免拖垮聊天
+            Logger.e("[$name] applyHide 异常: $t")
         }
     }
 
+    private fun holderToView(holder: Any): View? {
+        if (holder is View) return holder
+        // 从 holder 字段树里找 View 类型字段
+        return Reflect.findFieldByType(holder, View::class.java) as? View
+    }
+
     private fun hideAvatarIn(container: View) {
-        // 遍历容器，收集所有 "MaskLayout + 内嵌 ImageView" 的头像容器
+        var hiddenCount = 0
+
+        // 策略 A：找 avatarIV 字段对应的 ImageView（微信标准字段名）
+        runCatching {
+            val avatarIv = findAvatarImageView(container)
+            if (avatarIv != null) {
+                hideAvatarImageView(avatarIv)
+                hiddenCount++
+            }
+        }
+
+        // 策略 B：遍历 View 树找 MaskLayout+ImageView 头像容器
         Views.walk(container) { v ->
             val clsName = v.javaClass.name
             if (clsName == maskLayoutClass) {
-                // 需要判断它是不是头像容器（内含头像 ImageView）
                 val containsAvatar = (v as? ViewGroup)?.let { vg ->
                     var has = false
                     for (i in 0 until vg.childCount) {
-                        val child = vg.getChildAt(i)
-                        if (child is ImageView) { has = true; break }
+                        if (vg.getChildAt(i) is ImageView) { has = true; break }
                     }
                     has
                 } ?: false
-
                 if (containsAvatar) {
-                    val lp = v.layoutParams
-                    val orig = originalWidths[v] ?: lp.width
-                    originalWidths[v] = orig
-                    lp.width = 0
-                    v.layoutParams = lp
-                    // 顺带隐藏头像 ImageView 本身
-                    (v as? ViewGroup)?.let { vg ->
-                        for (i in 0 until vg.childCount) {
-                            val child = vg.getChildAt(i)
-                            if (child is ImageView) child.visibility = View.GONE
-                        }
-                    }
+                    hideMaskLayout(v)
+                    hiddenCount++
                 }
             }
             false
         }
+
+        if (hiddenCount > 0) {
+            Logger.i("[$name] 已隐藏 $hiddenCount 个头像")
+        }
+    }
+
+    /** 递归遍历 container 的字段树，找 avatarIV 字段的 ImageView。 */
+    private fun findAvatarImageView(container: View): ImageView? {
+        // 直接找 container 的 avatarIV 字段
+        runCatching {
+            val v = XposedHelpers.getObjectField(container, "avatarIV")
+            if (v is ImageView) return v
+        } catch (_: Throwable) {}
+
+        // 遍历子 View 的字段
+        if (container is ViewGroup) {
+            for (i in 0 until container.childCount) {
+                val child = container.getChildAt(i)
+                runCatching {
+                    val v = XposedHelpers.getObjectField(child, "avatarIV")
+                    if (v is ImageView) return v
+                } catch (_: Throwable) {}
+                findAvatarImageView(child)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    /** 隐藏单个头像 ImageView：收窄其 MaskLayout 父容器宽度 + 隐藏自身。 */
+    private fun hideAvatarImageView(avatarIv: ImageView) {
+        val parent = avatarIv.parent
+        if (parent is View && parent.javaClass.name == maskLayoutClass) {
+            hideMaskLayout(parent)
+        } else {
+            avatarIv.visibility = View.GONE
+            avatarIv.layoutParams?.let { lp ->
+                lp.width = 0
+                lp.height = 0
+                avatarIv.layoutParams = lp
+            }
+        }
+    }
+
+    private fun hideMaskLayout(mask: View) {
+        val lp = mask.layoutParams
+        val orig = originalWidths[mask] ?: lp.width
+        originalWidths[mask] = orig
+        lp.width = 0
+        mask.layoutParams = lp
+        // 隐藏内部头像
+        (mask as? ViewGroup)?.let { vg ->
+            for (i in 0 until vg.childCount) {
+                vg.getChildAt(i).visibility = View.GONE
+            }
+        }
     }
 
     /**
-     * 兜底：直接 hook MaskLayout.onMeasure，把带头像 ImageView 的 MaskLayout 宽度设为 0。
-     * 这是不依赖消息 item 结构的通用方法（最新的微信大多是这个结构）。
+     * 兜底：直接 hook MaskLayout，把带头像 ImageView 的 MaskLayout 宽度设为 0。
      */
     private fun hookMaskLayoutFallback(classLoader: ClassLoader) {
         runCatching {
             val clazz = XposedHelpers.findClass(maskLayoutClass, classLoader)
+            // setMask / onMeasure 都挂上
             XposedBridge.hookAllMethods(clazz, "setMask", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
-                        val ths = param.thisObject as? View ?: return
-                        // 只有内部含头像 ImageView 的才处理
-                        var hasAvatar = false
-                        if (ths is ViewGroup) {
-                            for (i in 0 until ths.childCount) {
-                                if (ths.getChildAt(i) is ImageView) { hasAvatar = true; break }
-                            }
-                        }
-                        if (!hasAvatar) return
-                        val lp = ths.layoutParams
-                        val orig = originalWidths[ths] ?: lp.width
-                        originalWidths[ths] = orig
-                        lp.width = 0
-                        ths.layoutParams = lp
-                    } catch (_: Throwable) {}
+                    val ths = param.thisObject as? View ?: return
+                    if (hasAvatarChild(ths)) hideMaskLayout(ths)
                 }
             })
-            Logger.i("[$name] 已挂载 MaskLayout 兜底 Hook")
-        }.onFailure { /* 兜底失败不致命 */ }
+            XposedBridge.hookAllMethods(clazz, "onMeasure", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val ths = param.thisObject as? View ?: return
+                    if (hasAvatarChild(ths)) {
+                        val lp = ths.layoutParams
+                        lp.width = 0
+                        ths.layoutParams = lp
+                    }
+                }
+            })
+            Logger.i("[$name] 已挂载 MaskLayout 兜底 Hook (setMask/onMeasure)")
+        }.onFailure { Logger.e("[$name] MaskLayout 兜底 Hook 失败: $it") }
+    }
+
+    private fun hasAvatarChild(v: View): Boolean {
+        if (v !is ViewGroup) return false
+        for (i in 0 until v.childCount) {
+            if (v.getChildAt(i) is ImageView) return true
+        }
+        return false
     }
 }

@@ -6,19 +6,21 @@ import com.wechathook.core.Logger
 import com.wechathook.core.Prefs
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
+import de.robv.android.xposed.XposedHelpers
 
 /**
  * 聊天防撤回。
  *
- * 采用两层策略（均通过 DexKit 特征定位，尽量跨版本可用）：
+ * 实现思路（参考 WeKit/WAuxiliary 的 WeXmlParserApi + AntiMessageRecall）：
+ * 微信收到撤回消息时，会解析 sysmsg XML（`MicroMsg.SDK.XmlParser`，8.0.7x 的
+ * 实际类为 com.tencent.mm.sdk.platformtools.aa），解析结果 map 中撤回类型标记为
+ * `.sysmsg.$type == "revokemsg"`。我们在该解析方法的 after 阶段，把 type 置空，
+ * 使微信不把它当撤回消息处理，原消息保留显示。
  *
- * 1. 主动作（主流方案）：监控微信解析 sysmsg XML 的方法（`MicroMsg.SDK.XmlParser`），
- *    返回的结果 map 里若含 `revokemsg`，则把消息类型标记清空，使微信不把它当撤回消息处理，
- *    原消息保留显示。
- *
- * 2. 辅助（阻断撤回处理）：定位微信 `doRevokeMsg`（特征字符串
- *    `"doRevokeMsg xmlSrvMsgId=%d talker=%s isGet=%s"`），在 before 阶段直接阻断成空返回，
- *    阻止本地构造撤回指令。两层都做能大幅提升有效性，且任一失效不影响另一层。
+ * 关键点（已按 8.0.71 的 dex 字符串核实）：
+ * - 定位方式：按方法内使用的特征字符串 "MicroMsg.SDK.XmlParser" + "[ %s ]" 定位，
+ *   而不是按方法名（混淆后方法名不稳定）；
+ * - 类型 key：`.sysmsg.$type`（带 $），不是 `.sysmsg.type`。
  */
 object AntiRecallFeature : Feature {
 
@@ -26,7 +28,6 @@ object AntiRecallFeature : Feature {
     override val name = "聊天防撤回"
 
     private val enable: Boolean get() = Prefs.getBoolean("anti_recall_enable", true)
-    private val notifyAsSystem: Boolean get() = Prefs.getBoolean("anti_recall_notify", true)
 
     override fun defaultEnabled() = true
 
@@ -38,20 +39,50 @@ object AntiRecallFeature : Feature {
 
         Logger.i("[$name] 开始 Hook")
 
-        // ---- 策略 1：XmlParser 撤回拦截 ----
-        val parserClasses = finder.findClassNamesByStrings("MicroMsg.SDK.XmlParser", "[ %s ]")
-        if (parserClasses.isNotEmpty()) {
-            parserClasses.forEach { clsName ->
+        // ---- 策略 1：XmlParser 解析结果拦截（主策略） ----
+        val parserMethods = finder.findMethodsByStrings(
+            classLoader,
+            onlyPackages = listOf("com.tencent.mm.sdk.platformtools"),
+            strings = arrayOf("MicroMsg.SDK.XmlParser", "[ %s ]")
+        )
+        if (parserMethods.isNotEmpty()) {
+            parserMethods.take(3).forEach { method ->
                 runCatching {
-                    hookXmlParser(clsName, classLoader)
-                    Logger.i("[$name] XmlParser 拦截已生效: $clsName")
+                    XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            interceptRevoke(param)
+                        }
+                    })
+                    Logger.i("[$name] XmlParser 拦截已生效: ${method.declaringClass.name}#${method.name}")
                 }.onFailure { Logger.e("[$name] Hook XmlParser 失败: $it") }
             }
         } else {
-            Logger.w("[$name] 未定位到 XmlParser，策略1不可用。")
+            // 兜底：定位类后 hook 所有 parse 相关方法
+            Logger.w("[$name] 未按字符串定位到 XmlParser 方法，尝试类级兜底。")
+            val parserClasses = finder.findClassNamesByStrings("MicroMsg.SDK.XmlParser")
+            if (parserClasses.isNotEmpty()) {
+                parserClasses.take(2).forEach { clsName ->
+                    runCatching {
+                        val clazz = XposedHelpers.findClass(clsName, classLoader)
+                        XposedBridge.hookAllMethods(clazz, "parse", object : XC_MethodHook() {
+                            override fun afterHookedMethod(param: MethodHookParam) {
+                                interceptRevoke(param)
+                            }
+                        })
+                        XposedBridge.hookAllMethods(clazz, "parseFromXML", object : XC_MethodHook() {
+                            override fun afterHookedMethod(param: MethodHookParam) {
+                                interceptRevoke(param)
+                            }
+                        })
+                        Logger.i("[$name] XmlParser 类级兜底已生效: $clsName")
+                    }.onFailure { Logger.e("[$name] XmlParser 类级兜底失败: $it") }
+                }
+            } else {
+                Logger.e("[$name] 无法定位 XmlParser，策略1不可用。")
+            }
         }
 
-        // ---- 策略 2：doRevokeMsg 阻断 ----
+        // ---- 策略 2：doRevokeMsg 阻断（辅助） ----
         val revokeMethods = finder.findMethodsByStrings(
             classLoader,
             onlyPackages = listOf("com.tencent.mm"),
@@ -73,40 +104,24 @@ object AntiRecallFeature : Feature {
         }
     }
 
-    private fun hookXmlParser(clsName: String, classLoader: ClassLoader) {
-        val clazz = de.robv.android.xposed.XposedHelpers.findClass(clsName, classLoader)
-        // XmlParser 的解析方法多为静态、参数通常是 (String xml, String rootTag)，返回 MutableMap
-        XposedBridge.hookAllMethods(clazz, "parse", object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                try {
-                    val result = param.result as? MutableMap<*, *> ?: return
-                    @Suppress("UNCHECKED_CAST")
-                    val map = result as MutableMap<String, Any?>
-                    val sysType = map[".sysmsg.type"] as? String ?: return
-                    if (!sysType.equals("revokemsg", ignoreCase = true)) return
+    /** 拦截撤回：把解析结果里的撤回类型标记清空。 */
+    private fun interceptRevoke(param: XC_MethodHook.MethodHookParam) {
+        try {
+            val result = param.result as? MutableMap<*, *> ?: return
+            @Suppress("UNCHECKED_CAST")
+            val map = result as MutableMap<String, Any?>
 
-                    Logger.i("[$name] 检测到撤回消息，已拦截（保留原消息）")
-                    // 清空撤回标记，微信将不把它视为撤回消息
-                    map[".sysmsg.type"] = null
-                } catch (t: Throwable) {
-                    // 单次解析失败不影响
-                }
-            }
-        })
+            val sysType = map[".sysmsg.\$type"] as? String ?: return
+            if (!sysType.equals("revokemsg", ignoreCase = true)) return
 
-        // 部分版本方法名可能不是 parse，兜底 hook 名字含 "parse" 的方法
-        val clazz2 = clazz
-        XposedBridge.hookAllMethods(clazz2, "parseFromXML", object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                try {
-                    val result = param.result as? MutableMap<*, *> ?: return
-                    @Suppress("UNCHECKED_CAST")
-                    val map = result as MutableMap<String, Any?>
-                    if ((map[".sysmsg.type"] as? String)?.equals("revokemsg", true) == true) {
-                        map[".sysmsg.type"] = null
-                    }
-                } catch (_: Throwable) {}
-            }
-        })
+            Logger.i("[$name] 检测到撤回消息，已拦截（保留原消息）")
+            // 清空撤回类型标记，微信将不把它视为撤回消息
+            map[".sysmsg.\$type"] = null
+
+            // 额外：清掉 newmsgid，避免微信按新消息 ID 找到原消息并替换
+            map[".sysmsg.revokemsg.newmsgid"] = null
+        } catch (t: Throwable) {
+            // 单次解析失败不影响
+        }
     }
 }
