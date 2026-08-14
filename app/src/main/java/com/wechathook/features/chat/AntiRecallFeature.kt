@@ -116,7 +116,7 @@ object AntiRecallFeature : Feature {
         }
     }
 
-    /** 拦截撤回：把解析结果里的撤回类型标记清空，并按模板改写提示文本。 */
+    /** 拦截撤回：保留原消息，并按配置决定是否显示自定义撤回提示。 */
     private fun interceptRevoke(param: XC_MethodHook.MethodHookParam) {
         try {
             val result = param.result as? MutableMap<*, *> ?: return
@@ -126,35 +126,32 @@ object AntiRecallFeature : Feature {
             val sysType = map[".sysmsg.\$type"] as? String ?: return
             if (!sysType.equals("revokemsg", ignoreCase = true)) return
 
-            Logger.i("[$name] 检测到撤回消息，已拦截（保留原消息）")
-
             // 提取撤回信息，用于自定义提示
             val replaceMsg = map[".sysmsg.revokemsg.replacemsg"] as? String ?: ""
-            val newMsgId = map[".sysmsg.revokemsg.newmsgid"] as? String ?: ""
             val session = map[".sysmsg.revokemsg.session"] as? String ?: ""
 
             // 从 replacemsg 提取发送者（格式如「张三」或 "张三"）
             val sender = extractSender(replaceMsg)
 
-            // 生成自定义提示文本（用户配置模板）
             val noticeTemplate = Prefs.getString("anti_recall_notice", "")
-            val finalReplaceMsg = if (noticeTemplate.isNotBlank()) {
-                noticeTemplate
+            if (noticeTemplate.isNotBlank()) {
+                // 配置了自定义提示：
+                // 保留 revokemsg 类型让微信走"撤回处理"流程（它会用 replacemsg 在聊天界面
+                // 插入一条系统提示），但把 newmsgid 指向一个不存在的消息 id —— 微信按此 id
+                // 查不到原消息，就不会删除/改写原消息，从而同时做到"原消息保留 + 自定义提示显示"。
+                val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                    .format(java.util.Date())
+                val finalText = noticeTemplate
                     .replace("{sender}", sender)
-                    .replace("{time}", java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-                        .format(java.util.Date()))
+                    .replace("{time}", time)
+                map[".sysmsg.revokemsg.newmsgid"] = "99999999999999"
+                map[".sysmsg.revokemsg.replacemsg"] = finalText
+                Logger.i("[$name] 撤回已拦截（保留原消息），自定义提示: $finalText")
             } else {
-                replaceMsg
-            }
-
-            // 保留原消息：清掉撤回标记，微信不把它当撤回处理
-            map[".sysmsg.\$type"] = null
-            map[".sysmsg.revokemsg.newmsgid"] = null
-
-            // 若配置了自定义提示且 replacemsg 非空，改写提示文本（微信会用 replacemsg 显示系统提示）
-            if (finalReplaceMsg.isNotBlank() && finalReplaceMsg != replaceMsg) {
-                map[".sysmsg.revokemsg.replacemsg"] = finalReplaceMsg
-                Logger.i("[$name] 自定义撤回提示: $finalReplaceMsg")
+                // 未配置提示：静默防撤回 —— 清掉撤回类型标记，微信不把它当撤回处理，原消息保留
+                Logger.i("[$name] 检测到撤回消息，已拦截（保留原消息）")
+                map[".sysmsg.\$type"] = null
+                map[".sysmsg.revokemsg.newmsgid"] = null
             }
         } catch (t: Throwable) {
             // 单次解析失败不影响

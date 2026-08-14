@@ -268,10 +268,7 @@ class MainActivity : AppCompatActivity() {
         }
         val til = com.google.android.material.textfield.TextInputLayout(this).apply {
             boxBackgroundMode = com.google.android.material.textfield.TextInputLayout.BOX_BACKGROUND_OUTLINE
-            setBoxCornerRadiusTopStart(dp(10).toFloat())
-            setBoxCornerRadiusTopEnd(dp(10).toFloat())
-            setBoxCornerRadiusBottomStart(dp(10).toFloat())
-            setBoxCornerRadiusBottomEnd(dp(10).toFloat())
+            setBoxCornerRadii(dp(10).toFloat(), dp(10).toFloat(), dp(10).toFloat(), dp(10).toFloat())
             isHintEnabled = false
             setPadding(0, 0, 0, 0)
         }
