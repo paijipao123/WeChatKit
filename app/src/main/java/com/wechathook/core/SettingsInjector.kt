@@ -77,7 +77,7 @@ object SettingsInjector {
             XposedBridge.hookAllMethods(clsMMActivity, "onOptionsItemSelected", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
-                        val activity = param.thisObject as? Activity
+                        val activity = param.thisObject as? Activity ?: return
                         if (activity.javaClass.name != CLS_MAIN_SETTINGS_UI) return
                         val item = param.args[0] as? MenuItem ?: return
                         if (item.itemId == MENU_ID_WEKIT) {

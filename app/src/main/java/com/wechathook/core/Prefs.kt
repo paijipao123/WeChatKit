@@ -201,9 +201,29 @@ object Prefs {
 
     // ---- 读写入口 ----
 
+    /** 上次加载时文件的修改时间，用于检测配置变化（热更新）。 */
+    private var lastLoadedMtime: Long = -1L
+
+    /** 上次检测时间（限频，避免频繁 stat）。 */
+    private var lastCheckTime: Long = 0L
+
+    /**
+     * 确保配置已加载；若文件被外部修改（设置页改开关），自动重新加载，
+     * 使红包/转账等"触发时读配置"的功能**开关即时生效**（无需重启微信）。
+     */
     private fun ensureLoaded() {
-        if (cache.isEmpty()) {
+        val now = System.currentTimeMillis()
+        if (now - lastCheckTime < 2000) {
+            // 限频：2 秒内不重复检查
+            if (cache.isNotEmpty()) return
+        }
+        lastCheckTime = now
+
+        val file = readFile()
+        val mtime = file?.lastModified() ?: -1L
+        if (cache.isEmpty() || (mtime != -1L && mtime != lastLoadedMtime)) {
             reload()
+            lastLoadedMtime = mtime
         }
     }
 
