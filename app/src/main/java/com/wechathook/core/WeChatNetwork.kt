@@ -27,9 +27,13 @@ object WeChatNetwork {
     private var doSceneMethod: Method? = null
     private var u0Class: Class<*>? = null
 
+    /** 从微信自身发包流程中捕获的 dispatcher 实例。 */
+    @Volatile
+    private var capturedDispatcher: Any? = null
+
     /**
      * 初始化微信网络层：解析 NetScene 基类的 dispatcher/doScene 方法。
-     * 通过红包 Receive 类的继承链向上找基类 m1（含 doScene 方法）。
+     * 同时 hook dispatch 方法捕获真实 dispatcher（微信发包时自动获取）。
      */
     fun init(classLoader: ClassLoader, finder: DexKitFinder): Boolean {
         if (doSceneMethod != null) return true
@@ -45,12 +49,11 @@ object WeChatNetwork {
             val baseClazz = de.robv.android.xposed.XposedHelpers.findClass(baseClassName, classLoader)
             Logger.i("WeChatNetwork: 找到 NetScene 基类: $baseClassName")
 
-            // 2. 找 doScene 方法: 参数含 network.s (dispatcher) 的 doScene
+            // 2. 找 doScene 方法
             val doScene = baseClazz.declaredMethods.firstOrNull { m ->
                 m.name == "doScene" && m.parameterCount >= 1 &&
                     m.parameterTypes[0].name.contains("network.s")
             } ?: run {
-                // 回退: 任意 doScene 方法
                 baseClazz.declaredMethods.firstOrNull { it.name == "doScene" }
             }
             if (doScene == null) {
@@ -69,7 +72,26 @@ object WeChatNetwork {
                 classLoader.loadClass("com.tencent.mm.modelbase.u0")
             }.getOrNull()
 
-            Logger.i("WeChatNetwork: 初始化成功, base=$baseClassName, doScene=${doScene.name}, dispatcher=${dispatcherMethod?.name}")
+            // 5. 关键：hook dispatch 方法，捕获微信发包时使用的真实 dispatcher
+            runCatching {
+                val dispatch = baseClazz.declaredMethods.firstOrNull { m ->
+                    m.name == "dispatch" && m.parameterCount >= 1 &&
+                        m.parameterTypes[0].name.contains("network.s")
+                }
+                if (dispatch != null) {
+                    de.robv.android.xposed.XposedBridge.hookMethod(dispatch, object : de.robv.android.xposed.XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            try {
+                                val disp = param.args[0]
+                                if (disp != null) capturedDispatcher = disp
+                            } catch (_: Throwable) {}
+                        }
+                    })
+                    Logger.i("WeChatNetwork: 已 hook dispatch 捕获 dispatcher")
+                }
+            }
+
+            Logger.i("WeChatNetwork: 初始化成功, base=$baseClassName, doScene=${doScene.name}")
             true
         } catch (t: Throwable) {
             Logger.e("WeChatNetwork: 初始化失败 $t")
@@ -85,14 +107,14 @@ object WeChatNetwork {
                 return false
             }
 
-            // 1. 获取 dispatcher
-            val dispatcher = if (dispatcherMethod != null) {
-                runCatching { dispatcherMethod!!.invoke(netScene) }.getOrNull()
-            } else {
-                null
+            // 1. 获取 dispatcher：优先用捕获的真实 dispatcher，其次调 dispatcher() 方法
+            val dispatcher = capturedDispatcher ?: run {
+                if (dispatcherMethod != null) {
+                    runCatching { dispatcherMethod!!.invoke(netScene) }.getOrNull()
+                } else null
             }
             if (dispatcher == null) {
-                Logger.e("WeChatNetwork: 无法获取 dispatcher")
+                Logger.e("WeChatNetwork: 无法获取 dispatcher (等待微信发包后自动捕获)")
                 return false
             }
 
