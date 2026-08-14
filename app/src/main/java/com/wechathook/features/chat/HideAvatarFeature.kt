@@ -256,8 +256,9 @@ object HideAvatarFeature : Feature {
         var cur: android.view.ViewParent? = v.parent
         var guard = 0
         while (cur is View && guard < 10) {
-            val pp = cur.parent
-            if (pp is androidx.recyclerview.widget.RecyclerView) return cur
+            val curView = cur as View
+            val pp = curView.parent
+            if (pp is androidx.recyclerview.widget.RecyclerView) return curView
             cur = pp
             guard++
         }
