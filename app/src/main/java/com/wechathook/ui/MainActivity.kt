@@ -33,7 +33,10 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 读取模块自身配置（无需 context，Prefs 直接访问模块 data 目录下文件）
+        // 请求存储权限（配置存于 /sdcard/WeChatKit/，需要读写外部存储）
+        requestStoragePermission()
+
+        // 读取模块配置（sdcard 共享路径优先）
         Prefs.reload()
 
         val root = LinearLayout(this).apply {
@@ -70,6 +73,18 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         setContentView(scroll)
+    }
+
+    private fun requestStoragePermission() {
+        if (android.os.Build.VERSION.SDK_INT >= 23) {
+            val perms = arrayOf(
+                android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+            )
+            try {
+                requestPermissions(perms, 100)
+            } catch (_: Throwable) {}
+        }
     }
 
     private fun title(text: String): TextView = TextView(this).apply {

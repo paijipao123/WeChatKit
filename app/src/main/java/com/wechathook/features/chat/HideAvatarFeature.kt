@@ -80,6 +80,18 @@ object HideAvatarFeature : Feature {
             val clazz = XposedHelpers.findClass(AVATAR_VIEW_CLASS, classLoader)
             Logger.i("[$name] 找到头像类: $AVATAR_VIEW_CLASS")
 
+            // 构造方法：实例创建后立即隐藏（最可靠）
+            runCatching {
+                XposedBridge.hookAllConstructors(clazz, object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            val v = param.thisObject as? View ?: return
+                            hideAvatarView(v)
+                        } catch (_: Throwable) {}
+                    }
+                })
+            }
+
             // onMeasure: 收为 0 尺寸
             XposedBridge.hookAllMethods(clazz, "onMeasure", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
@@ -110,7 +122,7 @@ object HideAvatarFeature : Feature {
                 }
             })
 
-            Logger.i("[$name] 已 Hook 头像类 (onMeasure/onAttachedToWindow/setVisibility)")
+            Logger.i("[$name] 已 Hook 头像类 (构造/onMeasure/onAttachedToWindow/setVisibility)")
         }.onFailure { Logger.e("[$name] 头像类 Hook 失败: $it") }
     }
 
