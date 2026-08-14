@@ -96,10 +96,13 @@ object HideAvatarFeature : Feature {
                         val v = param.thisObject as? View ?: return
                         hideAvatarView(v)
                         v.visibility = View.GONE
-                        param.setResult(Unit)  // 阻止原 onMeasure
-                        // 强制 0 尺寸
-                        v.measure(0, 0)
-                        v.setMeasuredDimension(0, 0)
+                        // 阻止原 onMeasure，用反射调用 protected setMeasuredDimension
+                        param.result = Unit
+                        runCatching {
+                            val m = View::class.java.getDeclaredMethod("setMeasuredDimension", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                            m.isAccessible = true
+                            m.invoke(v, 0, 0)
+                        }
                     } catch (_: Throwable) {}
                 }
             })
