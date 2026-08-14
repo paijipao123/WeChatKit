@@ -3,6 +3,15 @@
     <color name="teal_600">#00897B</color>
     <color name="teal_700">#00796B</color>
     <color name="teal_400">#26A69A</color>
+    <color name="teal_100">#B2DFDB</color>
+    <color name="teal_900">#004D40</color>
     <color name="white">#FFFFFFFF</color>
     <color name="window_bg">#FFF3F2F7</color>
+    <color name="surface_variant">#FFE4E7EC</color>
+    <color name="text_primary">#FF1F1F1F</color>
+    <color name="text_secondary">#FF757575</color>
+    <color name="divider">#FFE0E0E0</color>
+    <color name="card_bg">#FFFFFFFF</color>
+    <color name="danger">#FFE53935</color>
+    <color name="danger_bg">#1AE53935</color>
 </resources>

@@ -5,12 +5,16 @@ xposed = "82"
 dexkit = "2.0.7"
 okhttp = "4.12.0"
 coroutines = "1.7.3"
+material = "1.11.0"
+appcompat = "1.6.1"
 
 [libraries]
 xposed = { group = "de.robv.android.xposed", name = "api", version.ref = "xposed" }
 dexkit = { group = "org.luckypray", name = "dexkit", version.ref = "dexkit" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

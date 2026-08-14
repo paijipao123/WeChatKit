@@ -1,17 +1,20 @@
 package com.wechathook.ui
 
 import android.app.Activity
+import android.graphics.Typeface
 import android.os.Bundle
-import android.text.InputType
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.button.MaterialButton
 import com.wechathook.core.Prefs
+import com.wechathook.core.SymbolResolver
 import com.wechathook.features.chat.AntiRecallFeature
 import com.wechathook.features.chat.HideAvatarFeature
 import com.wechathook.features.money.AutoCollectTransferFeature
@@ -20,15 +23,12 @@ import com.wechathook.features.moments.AntiMomentsDeleteFeature
 import com.wechathook.features.readreceipt.ReadReceiptFeature
 
 /**
- * 模块设置页。
+ * 模块设置页（Material3 风格）。
  *
- * 在设置页里对每项功能做开关，并持久化到 SharedPreferences（微信宿主进程也读取同一文件，
- * 因此 hook 侧能感知到设置变化）。注意：由于 LSPosed 模块自身的 Context 与宿主的 getSharedPreferences
- * 指向不同，这里统一使用模块自己的 SharedPreferences 文件，并在 hook 侧通过宿主 Context 读取同名文件。
- *
- * 使用平台原生 [Activity]，不依赖 AppCompat，以免 LSPosed 模块资源链接出问题。
+ * 使用 MaterialCardView 卡片分组 + MaterialSwitch 开关，
+ * 提供现代化观感。支持从模块 App 或微信设置入口打开。
  */
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,75 +36,253 @@ class MainActivity : Activity() {
         // 请求存储权限（配置存于 /sdcard/WeChatKit/，需要读写外部存储）
         requestStoragePermission()
 
-        // 读取模块配置（sdcard 共享路径优先）
+        // 读取模块配置
         Prefs.reload()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 32, 48, 32)
+            setPadding(dp(16), dp(8), dp(16), dp(24))
         }
 
-        // 若尚未授予"所有文件访问"权限，顶部显示提示条（可点击重新授权）
-        if (android.os.Build.VERSION.SDK_INT >= 30 && !isAllFilesAccessGranted()) {
-            root.addView(permissionBanner())
-        }
+        // ---- 头部 ----
+        root.addView(header())
 
-        root.addView(title("WeChatKit 微信增强"))
-        root.addView(subtitle("功能开关与配置（修改后请重启微信生效）"))
+        // ---- 基础功能卡片 ----
+        root.addView(card(
+            "💬 基础功能",
+            listOf(
+                SwitchItem("隐藏消息头像（紧凑）",
+                    "只去左右头像，气泡间距与微信原版一致",
+                    "feat_${HideAvatarFeature.key}", HideAvatarFeature.defaultEnabled()),
+                SwitchItem("聊天防撤回",
+                    "对方撤回的消息保留显示",
+                    "feat_${AntiRecallFeature.key}", AntiRecallFeature.defaultEnabled()),
+                SwitchItem("朋友圈防删",
+                    "阻止他人删除朋友圈后消失",
+                    "feat_${AntiMomentsDeleteFeature.key}", AntiMomentsDeleteFeature.defaultEnabled()),
+            )
+        ))
 
-        // 显示当前微信版本（若从微信入口进入）
-        root.addView(versionInfo())
+        // ---- 红包转账卡片 ----
+        root.addView(card(
+            "🧧 红包 / 转账",
+            listOf(
+                SwitchItem("自动抢红包",
+                    "后台自动拆包/开包（有封号风险）",
+                    "feat_${AutoRedPacketFeature.key}", AutoRedPacketFeature.defaultEnabled()),
+                SwitchItem("自动收款（转账）",
+                    "后台自动确认收款（有封号风险）",
+                    "feat_${AutoCollectTransferFeature.key}", AutoCollectTransferFeature.defaultEnabled()),
+            )
+        ))
 
-        // 各功能开关：key -> (标题, 说明, 默认开启)
-        addSwitch(root, "feat_${HideAvatarFeature.key}", "隐藏消息头像（紧凑）",
-            "只去左右头像，气泡间距与微信原版一致", HideAvatarFeature.defaultEnabled())
-        addSwitch(root, "feat_${AntiRecallFeature.key}", "聊天防撤回",
-            "对方撤回的消息保留显示", AntiRecallFeature.defaultEnabled())
-        addSwitch(root, "feat_${AntiMomentsDeleteFeature.key}", "朋友圈防删",
-            "阻止他人删除朋友圈后消失", AntiMomentsDeleteFeature.defaultEnabled())
-        addSwitch(root, "feat_${ReadReceiptFeature.key}", "已读回执",
-            "配合 read-receipt-tracker 服务显示\"已读 X 人\"（需填服务器地址）", ReadReceiptFeature.defaultEnabled())
-        addSwitch(root, "feat_${AutoRedPacketFeature.key}", "自动抢红包",
-            "后台 hook 自动拆包/开包（有封号风险）", AutoRedPacketFeature.defaultEnabled())
-        addSwitch(root, "feat_${AutoCollectTransferFeature.key}", "自动收款（转账）",
-            "后台 hook 自动确认收款（有封号风险）", AutoCollectTransferFeature.defaultEnabled())
+        // ---- 已读回执卡片 ----
+        root.addView(card(
+            "👁 已读回执",
+            listOf(
+                SwitchItem("已读回执",
+                    "配合 read-receipt-tracker 服务显示\"已读 X 人\"",
+                    "feat_${ReadReceiptFeature.key}", ReadReceiptFeature.defaultEnabled()),
+            )
+        ))
 
-        root.addView(section("已读回执服务器"))
-        root.addView(textInput("read_receipt_server", "服务器地址",
-            "例如 http://192.168.1.10:8080（read-receipt-tracker 服务）"))
+        // ---- 参数设置卡片 ----
+        root.addView(paramCard())
 
-        root.addView(section("自动抢红包"))
-        root.addView(textInput("auto_redpacket_delay", "拆包延迟(ms)", "默认 800"))
-
-        // 重启微信按钮（让开关生效）
-        root.addView(restartWeChatButton())
+        // ---- 底部操作 ----
+        root.addView(restartButton())
 
         val scroll = ScrollView(this).apply {
-            addView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            addView(root, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         setContentView(scroll)
     }
 
-    /** 显示微信版本信息。 */
-    private fun versionInfo(): TextView {
-        val v = com.wechathook.core.SymbolResolver.wechatVersionName
-        val tv = TextView(this).apply {
-            text = "当前微信版本: $v"
-            textSize = 12f
-            setTextColor(0xFF888888.toInt())
-            setPadding(0, 0, 0, 16)
+    // ============ UI 组件 ============
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    /** 头部：标题 + 版本。 */
+    private fun header(): LinearLayout {
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(20), dp(8), dp(16))
         }
-        return tv
+        // 图标色块
+        val icon = TextView(this).apply {
+            text = "W"
+            textSize = 26f
+            setTextColor(0xFFFFFFFF.toInt())
+            gravity = Gravity.CENTER
+            setBackgroundResource(android.R.color.transparent)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0xFF00897B.toInt())
+            }
+            setPadding(0, 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52)).apply {
+                marginEnd = dp(16)
+            }
+        }
+        head.addView(icon)
+
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(TextView(this).apply {
+            text = "WeChatKit"
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFF1F1F1F.toInt())
+        })
+        col.addView(TextView(this).apply {
+            text = "微信增强模块 · v${SymbolResolver.wechatVersionName}"
+            textSize = 12f
+            setTextColor(0xFF757575.toInt())
+            setPadding(0, dp(2), 0, 0)
+        })
+        head.addView(col)
+        return head
     }
 
-    /** 重启微信按钮：强制停止微信，使开关生效。 */
-    private fun restartWeChatButton(): android.widget.Button {
-        return android.widget.Button(this).apply {
+    data class SwitchItem(val title: String, val desc: String, val prefKey: String, val default: Boolean)
+
+    /** 分组卡片。 */
+    private fun card(title: String, items: List<SwitchItem>): MaterialCardView {
+        val card = MaterialCardView(this).apply {
+            radius = dp(16).toFloat()
+            cardElevation = dp(1).toFloat()
+            setCardBackgroundColor(0xFFFFFFFF.toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(12)
+            }
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(8), dp(4))
+        }
+        col.addView(TextView(this).apply {
+            text = title
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFF00897B.toInt())
+            setPadding(0, 0, 0, dp(4))
+        })
+        items.forEachIndexed { idx, item ->
+            if (idx > 0) {
+                col.addView(divider())
+            }
+            col.addView(switchRow(item))
+        }
+        card.addView(col)
+        return card
+    }
+
+    /** 开关行。 */
+    private fun switchRow(item: SwitchItem): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val textCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        textCol.addView(TextView(this).apply {
+            text = item.title
+            textSize = 15f
+            setTextColor(0xFF1F1F1F.toInt())
+        })
+        textCol.addView(TextView(this).apply {
+            text = item.desc
+            textSize = 12f
+            setTextColor(0xFF757575.toInt())
+            setPadding(0, dp(2), 0, 0)
+        })
+        val sw = MaterialSwitch(this).apply {
+            isChecked = Prefs.getBoolean(item.prefKey, item.default)
+            setOnCheckedChangeListener { _, checked ->
+                Prefs.setBoolean(item.prefKey, checked)
+            }
+        }
+        row.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(sw)
+        return row
+    }
+
+    /** 参数输入卡片。 */
+    private fun paramCard(): MaterialCardView {
+        val card = MaterialCardView(this).apply {
+            radius = dp(16).toFloat()
+            cardElevation = dp(1).toFloat()
+            setCardBackgroundColor(0xFFFFFFFF.toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(12)
+            }
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        col.addView(TextView(this).apply {
+            text = "⚙️ 参数设置"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFF00897B.toInt())
+            setPadding(0, 0, 0, dp(8))
+        })
+        col.addView(label("已读回执服务器地址"))
+        col.addView(textInput("read_receipt_server", "例如 http://192.168.1.10:8080"))
+        col.addView(label("拆包延迟 (毫秒)"))
+        col.addView(textInput("auto_redpacket_delay", "默认 800"))
+        card.addView(col)
+        return card
+    }
+
+    private fun label(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 13f
+        setTextColor(0xFF757575.toInt())
+        setPadding(0, dp(8), 0, dp(4))
+    }
+
+    private fun textInput(prefKey: String, hint: String): EditText {
+        return EditText(this).apply {
+            this.hint = hint
+            textSize = 14f
+            setText(Prefs.getString(prefKey, ""))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            setBackgroundResource(android.R.drawable.edit_text)
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    Prefs.setString(prefKey, s?.toString() ?: "")
+                }
+            })
+        }
+    }
+
+    private fun divider(): View {
+        val v = View(this)
+        v.setBackgroundColor(0xFFE0E0E0.toInt())
+        v.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
+        return v
+    }
+
+    /** 重启微信按钮。 */
+    private fun restartButton(): MaterialButton {
+        return MaterialButton(this).apply {
             text = "保存并重启微信（使开关生效）"
+            textSize = 15f
+            isAllCaps = false
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(48)).apply { topMargin = dp(4) }
             setOnClickListener {
                 Prefs.reload()
-                // 用 root 强制停止微信（容器侧有 root）
                 try {
                     val p = java.lang.Runtime.getRuntime().exec(
                         arrayOf("am", "force-stop", "com.tencent.mm")
@@ -120,7 +298,8 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 是否已授予"所有文件访问"权限 (Android 11+) */
+    // ============ 权限 ============
+
     private fun isAllFilesAccessGranted(): Boolean {
         return try {
             android.os.Environment.isExternalStorageManager()
@@ -129,11 +308,9 @@ class MainActivity : Activity() {
         }
     }
 
-    /** 请求外部存储访问权限 */
     private fun requestStoragePermission() {
         try {
             if (android.os.Build.VERSION.SDK_INT >= 30) {
-                // Android 11+: 需要"所有文件访问"权限 (MANAGE_EXTERNAL_STORAGE)
                 if (!isAllFilesAccessGranted()) {
                     val intent = android.content.Intent(
                         android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
@@ -142,12 +319,10 @@ class MainActivity : Activity() {
                     try {
                         startActivity(intent)
                     } catch (_: Throwable) {
-                        // 部分 ROM 不支持带包名的 intent, 退回通用设置页
                         startActivity(android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
                     }
                 }
             } else if (android.os.Build.VERSION.SDK_INT >= 23) {
-                // Android 6-10: 动态权限
                 val perms = arrayOf(
                     android.Manifest.permission.READ_EXTERNAL_STORAGE,
                     android.Manifest.permission.WRITE_EXTERNAL_STORAGE
@@ -155,89 +330,5 @@ class MainActivity : Activity() {
                 requestPermissions(perms, 100)
             }
         } catch (_: Throwable) {}
-    }
-
-    /** 未授权时显示的提示条（可点击重新授权） */
-    private fun permissionBanner(): TextView {
-        return TextView(this).apply {
-            text = "⚠️ 未授予\"所有文件访问\"权限，配置无法保存！\n点击此处授权"
-            textSize = 13f
-            setTextColor(0xFFFF6B6B.toInt())
-            setBackgroundColor(0x1AFF6B6B)
-            setPadding(24, 16, 24, 16)
-            isClickable = true
-            setOnClickListener {
-                requestStoragePermission()
-            }
-        }
-    }
-
-    private fun title(text: String): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 22f
-        setPadding(0, 8, 0, 8)
-    }
-    private fun subtitle(text: String): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 13f
-        setTextColor(0xFF888888.toInt())
-        setPadding(0, 0, 0, 24)
-    }
-    private fun section(text: String): TextView = TextView(this).apply {
-        this.text = text
-        textSize = 16f
-        setTypeface(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
-        setPadding(0, 24, 0, 8)
-    }
-
-    private fun addSwitch(
-        root: LinearLayout,
-        prefKey: String,
-        title: String,
-        desc: String,
-        default: Boolean
-    ) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 12, 0, 12)
-        }
-        val textCol = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            isClickable = true
-        }
-        val tv = TextView(this).apply { this.text = title; textSize = 16f }
-        val dv = TextView(this).apply {
-            this.text = desc; textSize = 12f; setTextColor(0xFF666666.toInt())
-        }
-        textCol.addView(tv)
-        textCol.addView(dv)
-
-        val sw = Switch(this).apply {
-            isChecked = Prefs.getBoolean(prefKey, default)
-            setOnCheckedChangeListener { _, checked ->
-                Prefs.setBoolean(prefKey, checked)
-            }
-        }
-        row.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        row.addView(sw)
-        root.addView(row)
-    }
-
-    private fun textInput(prefKey: String, label: String, header: String): EditText {
-        val et = EditText(this).apply {
-            hint = header
-            inputType = InputType.TYPE_CLASS_TEXT
-            setText(Prefs.getString(prefKey, ""))
-            setPadding(0, 8, 0, 8)
-        }
-        et.addTextChangedListener(object : android.text.TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun afterTextChanged(s: android.text.Editable?) {
-                Prefs.setString(prefKey, s?.toString() ?: "")
-            }
-        })
-        return et
     }
 }

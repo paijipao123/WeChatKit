@@ -59,6 +59,10 @@ android {
 }
 
 dependencies {
+    // 设置页 UI (Material 组件)
+    implementation(libs.material)
+    implementation(libs.appcompat)
+
     // 编译期依赖：Xposed API（不打包进 APK）
     compileOnly(libs.xposed)
 
