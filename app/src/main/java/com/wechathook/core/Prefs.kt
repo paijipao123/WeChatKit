@@ -133,11 +133,28 @@ object Prefs {
             var type: String? = null
             var event = f.eventType
             while (event != XmlPullParser.END_DOCUMENT) {
-                if (event == XmlPullParser.START_TAG && f.name == "string") {
-                    val n = f.getAttributeValue(null, "name")
-                    val t = f.getAttributeValue(null, "type")
-                    name = n; type = t
-                } else if (event == XmlPullParser.TEXT && name != null) {
+                if (event == XmlPullParser.START_TAG) {
+                    when (f.name) {
+                        "string" -> {
+                            // <string name="x">text</string> 或旧格式 <string name="x" type="boolean">true</string>
+                            name = f.getAttributeValue(null, "name")
+                            type = f.getAttributeValue(null, "type") ?: "string"
+                        }
+                        "boolean", "int", "long" -> {
+                            // 标准 SharedPreferences 格式: <boolean name="x" value="true"/> 等（值在属性里）
+                            val n = f.getAttributeValue(null, "name")
+                            val v = f.getAttributeValue(null, "value")
+                            if (n != null && v != null) {
+                                when (f.name) {
+                                    "boolean" -> target[n] = v == "true"
+                                    "int" -> target[n] = v.toIntOrNull()
+                                    "long" -> target[n] = v.toLongOrNull()
+                                }
+                            }
+                            name = null; type = null
+                        }
+                    }
+                } else if (event == XmlPullParser.TEXT && name != null && type != null) {
                     val raw = f.text
                     when (type) {
                         "boolean" -> target[name] = raw == "true"

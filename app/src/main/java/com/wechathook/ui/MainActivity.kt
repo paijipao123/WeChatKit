@@ -271,38 +271,46 @@ class MainActivity : AppCompatActivity() {
         return row
     }
 
-    /** 齿轮弹窗：调对应功能的数值参数（Material3 风格）。 */
+    /** 齿轮弹窗：调对应功能的数值参数（Material3 风格，大框包小框）。 */
     private fun showParamDialog(title: String, params: List<ParamItem>) {
-        val content = MaterialCardView(this).apply {
+        // 大框：浅色圆角容器，包住所有参数小框
+        val bigCard = MaterialCardView(this).apply {
             radius = dp(20).toFloat()
             cardElevation = 0f
             setCardBackgroundColor(0xFFF5F5F5.toInt())
         }
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setPadding(dp(12), dp(12), dp(12), dp(4))
         }
-        params.forEachIndexed { idx, p ->
-            if (idx > 0) {
-                col.addView(View(this).apply {
-                    setBackgroundColor(0xFFE0E0E0.toInt())
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-                        topMargin = dp(10); bottomMargin = dp(10)
-                    }
-                })
+        params.forEach { p ->
+            // 小框：白色圆角卡片，一个参数一个小框（label + 控件）
+            val smallCard = MaterialCardView(this).apply {
+                radius = dp(12).toFloat()
+                cardElevation = dp(1).toFloat()
+                setCardBackgroundColor(0xFFFFFFFF.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = dp(8) }
+            }
+            val inner = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), dp(10), dp(14), dp(10))
             }
             when (p.type) {
-                "choice" -> col.addView(choiceGroup(p))
-                "seekbar" -> col.addView(seekBarRow(p))
+                "choice" -> inner.addView(choiceGroup(p))
+                "seekbar" -> inner.addView(seekBarRow(p))
                 else -> {
-                    col.addView(textInputLabel(p.label))
-                    col.addView(textInput(p.prefKey, p.hint, p.supporting))
+                    inner.addView(textInputLabel(p.label))
+                    inner.addView(textInput(p.prefKey, p.hint, p.supporting))
                 }
             }
+            smallCard.addView(inner)
+            col.addView(smallCard)
         }
-        content.addView(col)
-        val scroll = ScrollView(this).apply { addView(content) }
+        bigCard.addView(col)
+        val scroll = ScrollView(this).apply { addView(bigCard) }
 
         com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
             .setTitle("⚙️ $title")
