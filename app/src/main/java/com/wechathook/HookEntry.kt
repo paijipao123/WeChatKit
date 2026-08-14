@@ -88,11 +88,14 @@ class HookEntry : IXposedHookLoadPackage {
                 .onFailure { Logger.e("加载功能 ${feature.name} 失败: $it", it) }
         }
 
-        // 2) 依赖 DexKit 的功能延迟到 Application.onCreate 后（确保 Context 可用）
-        val dexFeatures = enabledFeatures.filter { it.needsDexKit() }
-        if (dexFeatures.isEmpty()) return
+        // 2) 依赖 DexKit 的功能延迟到 Application.onCreate 后（确保 Context 可用）。
+        //    注意：这里传入"全部需要 DexKit 的功能"，在 onCreate 后按最新配置重新过滤，
+        //    因为 handleLoadPackage 阶段 Application 未创建、配置读不到，
+        //    依赖开关的功能（红包/转账）此时会被误过滤。
+        val allDexFeatures = FEATURES.filter { it.needsDexKit() }
+        if (allDexFeatures.isEmpty()) return
 
-        hookApplicationOnCreate(lpparam, dexFeatures)
+        hookApplicationOnCreate(lpparam, allDexFeatures)
     }
 
     /** Hook 微信 Application.onCreate，在其后加载依赖 DexKit 的功能。 */
@@ -124,8 +127,23 @@ class HookEntry : IXposedHookLoadPackage {
         if (dexLoaded.get()) return
         dexLoaded.set(true)
 
+        // 关键：Application 已创建，此时 ActivityThread.currentApplication() 可用，
+        // Prefs 能通过"微信自己的 context 读微信自己的 prefs"拿到真实配置。
+        // 重新加载配置并重新过滤功能（handleLoadPackage 阶段拿不到配置，
+        // 导致依赖开关的功能（红包/转账）此前被误过滤）。
+        try {
+            Prefs.reload()
+        } catch (t: Throwable) {
+            Logger.w("延迟加载 Prefs 失败: $t")
+        }
+
+        val finalFeatures = dexFeatures.filter { feature ->
+            Prefs.getBoolean("feat_${feature.key}", feature.defaultEnabled())
+        }
+        Logger.i("延迟加载功能: ${finalFeatures.map { it.name }}")
+
         DexKitFinder.with(lpparam.classLoader) { finder ->
-            dexFeatures.forEach { feature ->
+            finalFeatures.forEach { feature ->
                 runCatching { feature.hook(lpparam.classLoader, finder) }
                     .onFailure { Logger.e("加载功能 ${feature.name} 失败: $it", it) }
             }
