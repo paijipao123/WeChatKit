@@ -87,19 +87,28 @@ object AutoRedPacketFeature : Feature {
             "com.tencent.wcdb.database.SQLiteDatabase",
             "com.tencent.wcdb.compat.SQLiteDatabase"
         )
+        // 微信不同路径可能用 insert / insertWithOnConflict / replace / insertOrThrow，
+        // 全部覆盖，避免只 hook insertWithOnConflict 导致漏拦截。
+        val methodNames = listOf("insertWithOnConflict", "insert", "replace", "insertOrThrow")
         candidates.forEach { clsName ->
             runCatching {
                 val clazz = XposedHelpers.findClass(clsName, classLoader)
-                XposedBridge.hookAllMethods(clazz, "insertWithOnConflict", object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        try {
-                            val table = param.args[0] as? String ?: return
-                            if (table != "message") return
-                            val values = param.args[2] as? ContentValues ?: return
-                            checkRedPacketInsert(values)
-                        } catch (_: Throwable) {}
-                    }
-                })
+                methodNames.forEach { mn ->
+                    runCatching {
+                        XposedBridge.hookAllMethods(clazz, mn, object : XC_MethodHook() {
+                            override fun afterHookedMethod(param: MethodHookParam) {
+                                try {
+                                    val table = param.args[0] as? String ?: return
+                                    if (table != "message") return
+                                    // insert(table, hack, values) / insertWithOnConflict(table, hack, values, algo)
+                                    // / replace(table, hack, values) —— 均为 args[2]=ContentValues
+                                    val values = param.args[2] as? ContentValues ?: return
+                                    checkRedPacketInsert(values)
+                                } catch (_: Throwable) {}
+                            }
+                        })
+                    }.onFailure { }
+                }
                 Logger.i("[$name] 已监听 $clsName 消息插入")
             }.onFailure { Logger.e("[$name] hook $clsName insert 失败 $it") }
         }

@@ -102,7 +102,7 @@ object AntiRecallFeature : Feature {
                     runCatching {
                         XposedBridge.hookMethod(method, object : XC_MethodHook() {
                             override fun beforeHookedMethod(param: MethodHookParam) {
-                                param.result = null
+                                param.setResult(null)
                             }
                         })
                         Logger.i("[$name] doRevokeMsg 阻断已生效: ${method.declaringClass.name}")

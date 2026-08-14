@@ -136,7 +136,7 @@ object HideAvatarFeature : Feature {
                         val v = param.thisObject as? View ?: return
                         hideAvatarView(v)
                         v.visibility = View.GONE
-                        param.result = Unit
+                        param.setResult(null)
                         runCatching {
                             val m = View::class.java.getDeclaredMethod("setMeasuredDimension", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
                             m.isAccessible = true
@@ -166,7 +166,7 @@ object HideAvatarFeature : Feature {
                     try {
                         val v = param.thisObject as? View ?: return
                         hideAvatarView(v)
-                        param.result = null
+                        param.setResult(null)
                     } catch (_: Throwable) {}
                 }
             })

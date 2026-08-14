@@ -72,7 +72,7 @@ object AntiMomentsDeleteFeature : Feature {
                     val whereClause = param.args.getOrNull(1) as? String
                     Logger.i("[$name] 拦截到 SnsInfo 删除! where=$whereClause")
                     // 阻止删除：返回 0（删除 0 行）
-                    param.result = 0
+                    param.setResult(0)
                 } catch (t: Throwable) {
                     Logger.e("[$name] delete 拦截异常: $t")
                 }

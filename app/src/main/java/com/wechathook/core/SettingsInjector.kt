@@ -34,14 +34,18 @@ object SettingsInjector {
     // 8.0.71/8.0.76: MainSettingsUI 走 MVVM 架构 (BaseSettingPrefUI->BaseSettingUI->BaseMvvmActivity->VASActivity),
     // VASActivity override 了 onCreateOptionsMenu/onPrepareOptionsMenu, 直接 hook MMActivity 的方法不会触发
     private const val CLS_VAS_ACTIVITY = "com.tencent.mm.ui.vas.VASActivity"
+    // MainSettingsUI 继承 BaseSettingPrefUI（它声明了 onCreate），页面创建必经，作为浮动按钮的可靠注入点
+    private const val CLS_BASE_SETTING_PREF_UI = "com.tencent.mm.plugin.setting.ui.setting_new.base.BaseSettingPrefUI"
     private const val CLS_ICON_PREFERENCE = "com.tencent.mm.ui.base.preference.IconPreference"
     private const val CLS_PREFERENCE = "com.tencent.mm.ui.base.preference.Preference"
 
     /** 已绑定标志 */
     private val bound = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    /** 浮动按钮是否已注入（防止重复） */
-    private val btnInjected = java.util.concurrent.atomic.AtomicBoolean(false)
+    /** 已注入浮动按钮的 Activity（按实例去重，避免退出重进后按钮丢失） */
+    private val injectedActivities = java.util.Collections.synchronizedSet(
+        java.util.Collections.newSetFromMap(java.util.WeakHashMap<Activity, Boolean>())
+    )
 
     /** 在微信主进程调用一次。 */
     fun hook(classLoader: ClassLoader) {
@@ -105,7 +109,7 @@ object SettingsInjector {
                                 val item = param.args[0] as? MenuItem ?: return
                                 if (item.itemId == MENU_ID_WEKIT) {
                                     openModuleSettings(activity)
-                                    param.result = true
+                                    param.setResult(true)
                                 }
                             } catch (_: Throwable) {}
                         }
@@ -115,7 +119,22 @@ object SettingsInjector {
             Logger.i("[$TAG] 新版设置页菜单注入已挂载")
 
             // ---- 方案 B: 浮动按钮兜底（MVVM 设置页若无系统菜单, 直接注入可见按钮） ----
-            // MainSettingsUI.superImportUIComponents 每次页面创建都会调用（8.0.71/8.0.76 方法名一致）
+            // 两个注入点：BaseSettingPrefUI.onCreate（页面创建必经，最可靠）+ superImportUIComponents（兼容）
+            val clsBasePrefUI = runCatching { XposedHelpers.findClass(CLS_BASE_SETTING_PREF_UI, classLoader) }.getOrNull()
+            if (clsBasePrefUI != null) {
+                runCatching {
+                    XposedBridge.hookAllMethods(clsBasePrefUI, "onCreate", object : XC_MethodHook() {
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            try {
+                                val activity = param.thisObject as? Activity ?: return
+                                if (activity.javaClass.name != CLS_MAIN_SETTINGS_UI) return
+                                injectFloatingButton(activity)
+                            } catch (_: Throwable) {}
+                        }
+                    })
+                    Logger.i("[$TAG] 新版设置页 onCreate 注入点已挂载")
+                }.onFailure { }
+            }
             runCatching {
                 XposedBridge.hookAllMethods(clsMainSettingsUI, "superImportUIComponents", object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
@@ -134,7 +153,7 @@ object SettingsInjector {
 
     /** 往设置页右上角注入一个悬浮入口按钮（不依赖微信菜单系统）。 */
     private fun injectFloatingButton(activity: Activity) {
-        if (btnInjected.getAndSet(true)) return
+        if (!injectedActivities.add(activity)) return
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             try {
                 val decor = activity.window?.decorView as? android.widget.FrameLayout ?: return@post
@@ -211,7 +230,7 @@ object SettingsInjector {
                         }.getOrNull()
                         if (key == KEY_ENTRY) {
                             openModuleSettings(activity)
-                            param.result = true
+                            param.setResult(true)
                         }
                     } catch (_: Throwable) {}
                 }
