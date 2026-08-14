@@ -227,6 +227,9 @@ object HideAvatarFeature : Feature {
         }.onFailure { Logger.e("[$name] $tag Hook 失败: $it") }
     }
 
+    /** 方向判断 DEBUG 日志计数（限频）。 */
+    private val dirLogCount = java.util.concurrent.atomic.AtomicInteger(0)
+
     /**
      * 方向感知隐藏：头像已布局（有坐标）时，
      * 按头像中心相对消息 item 的水平位置判断方向（左=对方，右=自己），
@@ -243,20 +246,21 @@ object HideAvatarFeature : Feature {
                 hideAvatarView(v)
                 return
             }
-            if (itemRoot.width <= 0 || v.width <= 0) return  // 尚未完成布局，等 onLayout/onDraw
+            if (itemRoot.width <= 0 || v.width <= 0) return
+            if (!v.isAttachedToWindow) return
 
-            // 关键：v.left 是相对"直接父容器"的坐标，不能直接和 itemRoot.width 比。
-            // 沿父链累加 left，得到头像中心相对消息 item 根的水平坐标。
-            var cx = v.left + v.width / 2f
-            var p: android.view.ViewParent? = v.parent
-            var guard = 0
-            while (p is View && p !== itemRoot && guard < 10) {
-                val pv = p as View
-                cx += pv.left
-                p = pv.parent
-                guard++
-            }
+            // 用窗口绝对坐标计算头像中心相对消息 item 根的水平位置（不受内部嵌套容器影响）
+            val vLoc = IntArray(2)
+            val rLoc = IntArray(2)
+            runCatching {
+                v.getLocationInWindow(vLoc)
+                itemRoot.getLocationInWindow(rLoc)
+            }.onFailure { return }
+            val cx = vLoc[0] + v.width / 2f - rLoc[0]
             val isLeft = cx <= itemRoot.width / 2f
+            if (dirLogCount.getAndIncrement() < 40) {
+                Logger.i("[$name] [DIR] m=$m vW=${v.width} rootW=${itemRoot.width} vX=${vLoc[0]} rX=${rLoc[0]} cx=$cx isLeft=$isLeft")
+            }
             val hide = if (m == "incoming") isLeft else !isLeft
             if (hide) hideAvatarView(v)
         } else {
