@@ -1,4 +1,4 @@
-package com.wechathook.core
+package com.wechatkit.hook.core
 
 /**
  * 功能模块统一接口。

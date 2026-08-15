@@ -1,4 +1,4 @@
-package com.wechathook.core
+package com.wechatkit.hook.core
 
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier

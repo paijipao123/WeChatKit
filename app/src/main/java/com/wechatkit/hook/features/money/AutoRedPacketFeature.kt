@@ -1,11 +1,11 @@
-package com.wechathook.features.money
+package com.wechatkit.hook.features.money
 
 import android.content.ContentValues
-import com.wechathook.core.DexKitFinder
-import com.wechathook.core.Feature
-import com.wechathook.core.Logger
-import com.wechathook.core.Prefs
-import com.wechathook.core.WeChatNetwork
+import com.wechatkit.hook.core.DexKitFinder
+import com.wechatkit.hook.core.Feature
+import com.wechatkit.hook.core.Logger
+import com.wechatkit.hook.core.Prefs
+import com.wechatkit.hook.core.WeChatNetwork
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
@@ -122,7 +122,7 @@ object AutoRedPacketFeature : Feature {
 
         // 屏蔽名单检查：跳过被屏蔽的人发的红包
         val talker = values.getAsString("talker") ?: ""
-        if (com.wechathook.core.BlockList.isBlocked(talker)) {
+        if (com.wechatkit.hook.core.BlockList.isBlocked(talker)) {
             Logger.i("[$name] 已屏蔽 ${talker} 的红包，跳过")
             return
         }

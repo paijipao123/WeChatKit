@@ -1,4 +1,4 @@
-package com.wechathook.ui
+package com.wechatkit.hook.ui
 
 import android.app.Activity
 import android.graphics.Typeface
@@ -13,12 +13,12 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.button.MaterialButton
-import com.wechathook.core.Prefs
-import com.wechathook.features.chat.AntiRecallFeature
-import com.wechathook.features.chat.HideAvatarFeature
-import com.wechathook.features.money.AutoCollectTransferFeature
-import com.wechathook.features.money.AutoRedPacketFeature
-import com.wechathook.features.moments.AntiMomentsDeleteFeature
+import com.wechatkit.hook.core.Prefs
+import com.wechatkit.hook.features.chat.AntiRecallFeature
+import com.wechatkit.hook.features.chat.HideAvatarFeature
+import com.wechatkit.hook.features.money.AutoCollectTransferFeature
+import com.wechatkit.hook.features.money.AutoRedPacketFeature
+import com.wechatkit.hook.features.moments.AntiMomentsDeleteFeature
 
 /**
  * 模块设置页（Material3 风格）。
@@ -74,12 +74,12 @@ class MainActivity : AppCompatActivity() {
                     "feat_${AntiMomentsDeleteFeature.key}", AntiMomentsDeleteFeature.defaultEnabled()),
                 SwitchItem("签名绕过",
                     "嵌入版/改包环境登录签名校验绕过（正常环境勿开）",
-                    "feat_${com.wechathook.features.system.SignatureBypassFeature.key}",
-                    com.wechathook.features.system.SignatureBypassFeature.defaultEnabled()),
+                    "feat_${com.wechatkit.hook.features.system.SignatureBypassFeature.key}",
+                    com.wechatkit.hook.features.system.SignatureBypassFeature.defaultEnabled()),
                 SwitchItem("平板模式",
                     "强制识别为平板：同机双开或两设备同号登录",
-                    "feat_${com.wechathook.features.system.TabletModeFeature.key}",
-                    com.wechathook.features.system.TabletModeFeature.defaultEnabled()),
+                    "feat_${com.wechatkit.hook.features.system.TabletModeFeature.key}",
+                    com.wechatkit.hook.features.system.TabletModeFeature.defaultEnabled()),
             )
         ))
 

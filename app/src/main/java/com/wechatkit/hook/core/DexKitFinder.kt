@@ -1,4 +1,4 @@
-package com.wechathook.core
+package com.wechatkit.hook.core
 
 import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.result.ClassData
@@ -97,7 +97,7 @@ class DexKitFinder internal constructor(
                 val at = Class.forName("android.app.ActivityThread")
                 val app = at.getMethod("currentApplication").invoke(null) as? android.app.Application
                 if (app != null) {
-                    val ai = app.packageManager.getApplicationInfo("com.wechathook", 0)
+                    val ai = app.packageManager.getApplicationInfo("com.wechatkit.hook", 0)
                     if (ai != null && ai.sourceDir != null) {
                         Logger.i("DexKitFinder: 通过 PackageManager 找到模块 APK: ${ai.sourceDir}")
                         return ai.sourceDir

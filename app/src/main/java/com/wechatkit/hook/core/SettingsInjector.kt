@@ -1,4 +1,4 @@
-package com.wechathook.core
+package com.wechatkit.hook.core
 
 import android.app.Activity
 import android.view.Menu
@@ -155,7 +155,7 @@ object SettingsInjector {
     private fun openModuleSettings(activity: Activity) {
         try {
             val intent = android.content.Intent()
-            intent.setClassName("com.wechathook", "com.wechathook.ui.MainActivity")
+            intent.setClassName("com.wechatkit.hook", "com.wechatkit.hook.ui.MainActivity")
             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             activity.startActivity(intent)
             Logger.i("[$TAG] 已打开模块设置页")

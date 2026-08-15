@@ -1,4 +1,4 @@
-package com.wechathook.core
+package com.wechatkit.hook.core
 
 import java.io.File
 import org.xmlpull.v1.XmlPullParser
@@ -12,7 +12,7 @@ import java.io.InputStreamReader
  * LSPosed 模块的 hook 运行在宿主（微信）进程，而设置页运行在模块自己的进程。
  * 跨进程配置共享采用**双路径双写**策略：
  *
- * 1. 模块私有目录 `/data/user/0/com.wechathook/shared_prefs/wechathook_prefs.xml`
+ * 1. 模块私有目录 `/data/user/0/com.wechatkit.hook/shared_prefs/wechathook_prefs.xml`
  *    —— 设置页写入后立即 chmod 644（目录 711），使微信进程可以读取
  *    （Android SELinux 允许读取其他应用 world-readable 的 app_data_file）。
  * 2. 外部存储 `/storage/emulated/0/WeChatKit/wechathook_prefs.xml`
@@ -28,7 +28,7 @@ object Prefs {
 
     /** 模块私有路径（设置页写入后 chmod 644 供微信进程读取）。 */
     private fun privateFile(): File =
-        File("/data/user/0/com.wechathook/shared_prefs/$FILE_NAME.xml")
+        File("/data/user/0/com.wechatkit.hook/shared_prefs/$FILE_NAME.xml")
 
     /** 跨进程共享路径（sdcard，辅助通道）。 */
     private fun sharedFile(): File =
@@ -110,7 +110,7 @@ object Prefs {
     /** 通过 LSPosed 的 XSharedPreferences 读取模块配置。 */
     private fun tryLoadViaXSharedPreferencesInto(target: HashMap<String, Any?>): Boolean {
         return try {
-            val prefs = de.robv.android.xposed.XSharedPreferences("com.wechathook", FILE_NAME)
+            val prefs = de.robv.android.xposed.XSharedPreferences("com.wechatkit.hook", FILE_NAME)
             try {
                 prefs.makeWorldReadable()
             } catch (_: Throwable) {}
@@ -201,10 +201,10 @@ object Prefs {
             lastLoadedMtime = file.lastModified()
 
             // 关键：让微信进程能读模块私有目录的配置
-            // 整条目录链路放行: /data/user/0/com.wechathook (711), shared_prefs (711)
+            // 整条目录链路放行: /data/user/0/com.wechatkit.hook (711), shared_prefs (711)
             // 文件 644（全局可读）
             runCatching {
-                val base = "/data/user/0/com.wechathook"
+                val base = "/data/user/0/com.wechatkit.hook"
                 val cmds = arrayOf(
                     arrayOf("chmod", "711", base),
                     arrayOf("chmod", "711", "$base/shared_prefs"),

@@ -1,4 +1,4 @@
-package com.wechathook.core
+package com.wechatkit.hook.core
 
 /**
  * 屏蔽名单工具：自动抢红包 / 自动收转账时跳过指定的人。

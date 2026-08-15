@@ -1,9 +1,9 @@
-package com.wechathook.features.chat
+package com.wechatkit.hook.features.chat
 
-import com.wechathook.core.DexKitFinder
-import com.wechathook.core.Feature
-import com.wechathook.core.Logger
-import com.wechathook.core.Prefs
+import com.wechatkit.hook.core.DexKitFinder
+import com.wechatkit.hook.core.Feature
+import com.wechatkit.hook.core.Logger
+import com.wechatkit.hook.core.Prefs
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers

@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.wechathook"
+    namespace = "com.wechatkit.hook"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.wechathook"
+        applicationId = "com.wechatkit.hook"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

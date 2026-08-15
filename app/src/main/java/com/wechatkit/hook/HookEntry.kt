@@ -1,14 +1,14 @@
-package com.wechathook
+package com.wechatkit.hook
 
-import com.wechathook.core.DexKitFinder
-import com.wechathook.core.Feature
-import com.wechathook.core.Logger
-import com.wechathook.core.Prefs
-import com.wechathook.features.chat.AntiRecallFeature
-import com.wechathook.features.chat.HideAvatarFeature
-import com.wechathook.features.money.AutoCollectTransferFeature
-import com.wechathook.features.money.AutoRedPacketFeature
-import com.wechathook.features.moments.AntiMomentsDeleteFeature
+import com.wechatkit.hook.core.DexKitFinder
+import com.wechatkit.hook.core.Feature
+import com.wechatkit.hook.core.Logger
+import com.wechatkit.hook.core.Prefs
+import com.wechatkit.hook.features.chat.AntiRecallFeature
+import com.wechatkit.hook.features.chat.HideAvatarFeature
+import com.wechatkit.hook.features.money.AutoCollectTransferFeature
+import com.wechatkit.hook.features.money.AutoRedPacketFeature
+import com.wechatkit.hook.features.moments.AntiMomentsDeleteFeature
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
@@ -41,8 +41,8 @@ class HookEntry : IXposedHookLoadPackage {
             AntiMomentsDeleteFeature,
             AutoRedPacketFeature,
             AutoCollectTransferFeature,
-            com.wechathook.features.system.SignatureBypassFeature,
-            com.wechathook.features.system.TabletModeFeature,
+            com.wechatkit.hook.features.system.SignatureBypassFeature,
+            com.wechatkit.hook.features.system.TabletModeFeature,
         )
     }
 
@@ -107,7 +107,7 @@ class HookEntry : IXposedHookLoadPackage {
         } catch (t: Throwable) {
             Logger.w("延迟加载 Prefs 失败: $t")
         }
-        com.wechathook.core.SymbolResolver.detectWechatVersion()
+        com.wechatkit.hook.core.SymbolResolver.detectWechatVersion()
 
         val enabled = FEATURES.filter { feature ->
             Prefs.getBoolean("feat_${feature.key}", feature.defaultEnabled())
@@ -128,7 +128,7 @@ class HookEntry : IXposedHookLoadPackage {
 
         // 主进程：挂载微信设置页注入器（把模块入口藏进微信设置）
         runCatching {
-            com.wechathook.core.SettingsInjector.hook(realLoader)
+            com.wechatkit.hook.core.SettingsInjector.hook(realLoader)
         }.onFailure { Logger.e("设置页注入器挂载失败: $it") }
 
         // 非 DexKit 功能（朋友圈防删）不依赖 DexKit，直接 hook

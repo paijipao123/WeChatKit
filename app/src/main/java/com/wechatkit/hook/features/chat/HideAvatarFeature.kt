@@ -1,15 +1,15 @@
-package com.wechathook.features.chat
+package com.wechatkit.hook.features.chat
 
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
-import com.wechathook.core.DexKitFinder
-import com.wechathook.core.Feature
-import com.wechathook.core.Logger
-import com.wechathook.core.Views
-import com.wechathook.core.Reflect
-import com.wechathook.core.Prefs
-import com.wechathook.core.SymbolResolver
+import com.wechatkit.hook.core.DexKitFinder
+import com.wechatkit.hook.core.Feature
+import com.wechatkit.hook.core.Logger
+import com.wechatkit.hook.core.Views
+import com.wechatkit.hook.core.Reflect
+import com.wechatkit.hook.core.Prefs
+import com.wechatkit.hook.core.SymbolResolver
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers

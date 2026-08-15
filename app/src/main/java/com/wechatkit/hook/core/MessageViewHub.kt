@@ -1,4 +1,4 @@
-package com.wechathook.core
+package com.wechatkit.hook.core
 
 import android.view.View
 import de.robv.android.xposed.XC_MethodHook
