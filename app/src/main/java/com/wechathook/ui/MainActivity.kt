@@ -78,6 +78,10 @@ class MainActivity : AppCompatActivity() {
                     "嵌入版/改包环境登录签名校验绕过（正常环境勿开）",
                     "feat_${com.wechathook.features.system.SignatureBypassFeature.key}",
                     com.wechathook.features.system.SignatureBypassFeature.defaultEnabled()),
+                SwitchItem("平板模式",
+                    "强制识别为平板：同机双开或两设备同号登录",
+                    "feat_${com.wechathook.features.system.TabletModeFeature.key}",
+                    com.wechathook.features.system.TabletModeFeature.defaultEnabled()),
             )
         ))
 

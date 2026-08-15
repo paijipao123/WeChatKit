@@ -44,6 +44,7 @@ class HookEntry : IXposedHookLoadPackage {
             AutoRedPacketFeature,
             AutoCollectTransferFeature,
             com.wechathook.features.system.SignatureBypassFeature,
+            com.wechathook.features.system.TabletModeFeature,
         )
     }
 
