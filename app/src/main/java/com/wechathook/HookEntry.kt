@@ -43,6 +43,7 @@ class HookEntry : IXposedHookLoadPackage {
             ReadReceiptFeature,
             AutoRedPacketFeature,
             AutoCollectTransferFeature,
+            com.wechathook.features.system.SignatureBypassFeature,
         )
     }
 

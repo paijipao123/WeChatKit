@@ -74,6 +74,10 @@ class MainActivity : AppCompatActivity() {
                 SwitchItem("朋友圈防删",
                     "阻止他人删除朋友圈后消失",
                     "feat_${AntiMomentsDeleteFeature.key}", AntiMomentsDeleteFeature.defaultEnabled()),
+                SwitchItem("签名绕过",
+                    "嵌入版/改包环境登录签名校验绕过（正常环境勿开）",
+                    "feat_${com.wechathook.features.system.SignatureBypassFeature.key}",
+                    com.wechathook.features.system.SignatureBypassFeature.defaultEnabled()),
             )
         ))
 
