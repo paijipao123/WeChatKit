@@ -220,6 +220,12 @@ object AvatarTimeFeature : Feature {
     /** 从消息 item 的 tag(holder) 反射微信自带的时间 TextView，取格式化好的文本。 */
     private fun getTimeText(itemRoot: View): String {
         val tag = itemRoot.tag ?: return ""
+        // 诊断：dump holder 字段（找 createTime 等消息数据字段）
+        if (diagCount.get() < 5) {
+            val sb = StringBuilder()
+            tag.javaClass.declaredFields.take(30).forEach { sb.append(it.name).append(",") }
+            Logger.i("[$name] [DIAG] holder=${tag.javaClass.simpleName} 字段: $sb")
+        }
         return runCatching {
             val tv = Reflect.findFieldByName(tag, "timeTV") as? TextView
             tv?.text?.toString() ?: ""

@@ -69,6 +69,23 @@ object RoundAvatarFeature : Feature {
                 }
             })
             Logger.i("[$name] x.draw 强制圆角已挂载（全局）")
+
+            // 诊断：hook ImageView.setImageDrawable（微信类 hook 无效则跳过），
+            // 打印头像 ImageView 实际使用的 Drawable 类名，确认是否走 x
+            runCatching {
+                XposedBridge.hookAllMethods(android.widget.ImageView::class.java, "setImageDrawable", object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        try {
+                            val v = param.thisObject as? android.view.View ?: return
+                            if (v.javaClass.name != "com.tencent.mm.ui.chatting.view.ChattingAvatarImageView") return
+                            val d = param.args.getOrNull(0) as? android.graphics.drawable.Drawable
+                            if (drawDiagCount.getAndIncrement() < 10) {
+                                Logger.i("[$name] [DIAG] 头像 drawable=${d?.javaClass?.name}")
+                            }
+                        } catch (_: Throwable) {}
+                    }
+                })
+            }.onFailure { }
         }.onFailure { Logger.e("[$name] x 类 hook 失败: $it") }
 
         // ---- 2. 头像加载入口 u#b 的 float 参数（双保险） ----
