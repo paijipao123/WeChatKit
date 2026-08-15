@@ -14,7 +14,6 @@ import com.google.android.material.card.MaterialCardView
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.button.MaterialButton
 import com.wechathook.core.Prefs
-import com.wechathook.core.SymbolResolver
 import com.wechathook.features.chat.AntiRecallFeature
 import com.wechathook.features.chat.HideAvatarFeature
 import com.wechathook.features.money.AutoCollectTransferFeature
@@ -95,7 +94,7 @@ class MainActivity : AppCompatActivity() {
                         ParamItem("拆包延迟（毫秒）", "auto_redpacket_delay", "默认 800"),
                         ParamItem("屏蔽名单", "blocked_talkers", "逗号分隔昵称/微信号")
                     )),
-                SwitchItem("自动收款（转账）",
+                SwitchItem("自动收转账",
                     "后台自动确认收款（有封号风险）",
                     "feat_${AutoCollectTransferFeature.key}", AutoCollectTransferFeature.defaultEnabled(),
                     params = listOf(
@@ -150,7 +149,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(0xFF1F1F1F.toInt())
         })
         col.addView(TextView(this).apply {
-            text = "微信增强模块 · v${SymbolResolver.wechatVersionName}"
+            text = "微信增强模块"
             textSize = 12f
             setTextColor(0xFF757575.toInt())
             setPadding(0, dp(2), 0, 0)

@@ -29,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap
 object AutoCollectTransferFeature : Feature {
 
     override val key = "auto_collect_transfer"
-    override val name = "自动收款（转账）"
+    override val name = "自动收转账"
 
     /** 确认收款 cgi 特征（用于 DexKit 定位请求类）。 */
     private const val STR_CONFIRM_URI = "/cgi-bin/mmpay-bin/transferoperation"
