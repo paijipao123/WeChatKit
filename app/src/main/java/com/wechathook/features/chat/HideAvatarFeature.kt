@@ -116,19 +116,77 @@ object HideAvatarFeature : Feature {
             }
         }
 
-        // ---- 辅助 1：消息 item onBindView 遍历隐藏 ----
+        // ---- 辅助 1：hook 消息 item 的绑定方法（关键！） ----
+        // 微信把绑定方法名混淆了（类 ve5.g 无 onBindView 方法），必须按特征字符串
+        // 定位方法本身再 hook（参考 WeKit 的 WeChatMessageViewApi），不能"类名+onBindView"。
         if (finder != null) {
-            val targetClassNames = finder.findClassNamesByStrings("MicroMsg.MvvmChattingItem", "[onBindView]")
-            if (targetClassNames.isEmpty()) {
-                val looser = finder.findClassNamesByStrings("MvvmChattingItem", "onBindView")
-                if (looser.isNotEmpty()) hookClass(looser.first(), classLoader)
+            val bindMethods = finder.findMethodsByStrings(
+                classLoader,
+                onlyPackages = listOf("com.tencent.mm"),
+                strings = arrayOf("MicroMsg.MvvmChattingItem", "[onBindView]")
+            )
+            if (bindMethods.isNotEmpty()) {
+                bindMethods.take(3).forEach { method ->
+                    runCatching {
+                        XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                            override fun afterHookedMethod(param: MethodHookParam) {
+                                try {
+                                    handleOnBindView(param)
+                                } catch (_: Throwable) {}
+                            }
+                        })
+                        Logger.i("[$name] 已 Hook 消息绑定方法: ${method.declaringClass.name}#${method.name}")
+                    }.onFailure { Logger.e("[$name] 消息绑定方法 Hook 失败: $it") }
+                }
             } else {
-                targetClassNames.forEach { hookClass(it, classLoader) }
+                // 兜底：类名+onBindView
+                val targetClassNames = finder.findClassNamesByStrings("MicroMsg.MvvmChattingItem", "[onBindView]")
+                if (targetClassNames.isNotEmpty()) {
+                    targetClassNames.forEach { hookClass(it, classLoader) }
+                } else {
+                    finder.findClassNamesByStrings("MvvmChattingItem", "onBindView").firstOrNull()
+                        ?.let { hookClass(it, classLoader) }
+                }
             }
         }
 
         // ---- 辅助 2：MaskLayout 兜底（兼容旧版本微信） ----
         hookMaskLayoutFallback(classLoader)
+    }
+
+    /**
+     * 消息绑定回调（onBindView 已触发）：找到消息条里的头像，
+     * 按模式处理（all 直接隐藏 / 单向布局完成后按方向判断），并应用消息间距。
+     */
+    private fun handleOnBindView(param: XC_MethodHook.MethodHookParam) {
+        val holder = param.args[0] ?: return
+        val holderView = Reflect.findFieldByType(holder, View::class.java) as? View ?: return
+        applyItemSpacing(holderView)
+        val m = mode()
+        if (m == "off") return
+
+        var avatar: View? = null
+        Views.walk(holderView) { v ->
+            if (v.javaClass.name == AVATAR_VIEW_CLASS) {
+                avatar = v
+                true
+            } else false
+        }
+        val av = avatar ?: return
+        if (dirLogCount.getAndIncrement() < 40) {
+            Logger.i("[$name] [DIR] onBindView holder=${holder.javaClass.name} avatar=${av.javaClass.simpleName}")
+        }
+        // 诊断：打印 holder 字段（前 3 次），用于定位 isSend 等方向字段
+        if (dirLogCount.get() < 8) {
+            val sb = StringBuilder()
+            holder.javaClass.declaredFields.take(30).forEach { sb.append(it.name).append(",") }
+            Logger.i("[$name] [DIR] holder 字段: $sb")
+        }
+        if (m == "all") {
+            hideAvatarView(av)
+        } else {
+            scheduleDirectionalCheck(av)
+        }
     }
 
     /** 按名称 hook 头像类。 */
