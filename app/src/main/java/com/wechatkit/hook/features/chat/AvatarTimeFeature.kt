@@ -41,6 +41,9 @@ object AvatarTimeFeature : Feature {
     /** avatar -> 时间 TextView（弱引用，防泄漏；RecyclerView 复用场景）。 */
     private val timeViews = java.util.Collections.synchronizedMap(java.util.WeakHashMap<View, TextView>())
 
+    /** 诊断日志计数。 */
+    private val diagCount = java.util.concurrent.atomic.AtomicInteger(0)
+
     override fun hook(classLoader: ClassLoader, finder: DexKitFinder?) {
         if (!Prefs.getBoolean("feat_avatar_time", false)) return
         Logger.i("[$name] 开始 Hook")
@@ -71,6 +74,9 @@ object AvatarTimeFeature : Feature {
                         val avatar = findAvatar(view) ?: return
                         val tv = timeViews[avatar] ?: return
                         val timeText = getTimeText(view)
+                        if (diagCount.getAndIncrement() < 5) {
+                            Logger.i("[$name] [DIAG] 时间文本='$timeText'")
+                        }
                         tv.text = timeText
                         tv.visibility = if (timeText.isEmpty()) View.GONE else View.VISIBLE
                     } catch (_: Throwable) {}

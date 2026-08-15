@@ -406,14 +406,34 @@ object HideAvatarFeature : Feature {
             v.layoutParams = lp
         }
 
-        // 2) 收窄父容器（若父容器是头像专用容器，如 MaskLayout 或类似布局）
+        // 2) 父容器（头像专用容器，如 MaskLayout）强制收窄为 0 并清水平 margin：
+        //    只 GONE 头像本身的话，外层容器仍占着一个头像宽度的空位，
+        //    导致消息与屏幕边缘之间留白（参考 WeKit：MaskLayout 宽度归零保锚点）。
         runCatching {
             val parent = v.parent
             if (parent is View) {
                 val parentLp = parent.layoutParams
-                if (parentLp.width > 0) {
+                if (parentLp is ViewGroup.MarginLayoutParams) {
                     parentLp.width = 0
-                    parent.layoutParams = parentLp
+                    parentLp.leftMargin = 0
+                    parentLp.rightMargin = 0
+                } else {
+                    parentLp.width = 0
+                }
+                parent.layoutParams = parentLp
+            }
+        }
+
+        // 3) 祖父容器：若也是头像专用小容器（宽度接近头像，排除气泡），一并收窄清 margin
+        runCatching {
+            val gp = v.parent?.parent
+            if (gp is View) {
+                val gpLp = gp.layoutParams
+                if (gpLp is ViewGroup.MarginLayoutParams && gpLp.width in 1..300) {
+                    gpLp.width = 0
+                    gpLp.leftMargin = 0
+                    gpLp.rightMargin = 0
+                    gp.layoutParams = gpLp
                 }
             }
         }
