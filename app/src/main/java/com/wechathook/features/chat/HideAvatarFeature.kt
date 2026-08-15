@@ -271,8 +271,10 @@ object HideAvatarFeature : Feature {
         }.onFailure { Logger.e("[$name] $tag Hook 失败: $it") }
     }
 
-    /** 方向判断 DEBUG 日志计数（限频）。 */
+    /** 方向判断 DEBUG 日志计数（限频，独立于触发日志）。 */
     private val dirLogCount = java.util.concurrent.atomic.AtomicInteger(0)
+    /** 布局回调触发日志计数（限频）。 */
+    private val dirTriggerCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     /**
      * 注册 ViewTreeObserver 布局回调：布局完成后（头像有坐标）按方向判断隐藏。
@@ -283,7 +285,7 @@ object HideAvatarFeature : Feature {
             val obs = v.viewTreeObserver
             obs.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
                 override fun onGlobalLayout() {
-                    if (dirLogCount.getAndIncrement() < 40) {
+                    if (dirTriggerCount.getAndIncrement() < 20) {
                         Logger.i("[$name] [DIR] 布局回调触发 on ${v.javaClass.name} w=${v.width}")
                     }
                     val done = applyDirectionalHide(v)
@@ -299,54 +301,48 @@ object HideAvatarFeature : Feature {
 
     /**
      * 方向感知隐藏：头像已布局（有坐标）时，
-     * 按头像中心相对消息 item 的水平位置判断方向（左=对方，右=自己），
+     * 按头像中心相对消息条（或根视图）的水平位置判断方向（左=对方，右=自己），
      * 再按模式决定是否隐藏；同时把消息间距应用到 item 根。
      * @return true=已判断完成；false=条件未就绪（调用方可保留监听重试）
      */
     private fun applyDirectionalHide(v: View): Boolean {
         val m = mode()
         if (m == "off") return true
+        if (v.width <= 0) return false
+        if (!v.isAttachedToWindow) return false
 
         val itemRoot = findItemRoot(v)
         if (itemRoot != null) {
             applyItemSpacing(itemRoot)
-            if (m == "all") {
-                hideAvatarView(v)
-                return true
-            }
-            if (itemRoot.width <= 0 || v.width <= 0) {
-                if (dirLogCount.getAndIncrement() < 40) {
-                    Logger.i("[$name] [DIR] 宽度未就绪 rootW=${itemRoot.width} vW=${v.width}")
-                }
-                return false
-            }
-            if (!v.isAttachedToWindow) {
-                if (dirLogCount.getAndIncrement() < 40) {
-                    Logger.i("[$name] [DIR] 未 attach")
-                }
-                return false
-            }
-
-            // 用窗口绝对坐标计算头像中心相对消息 item 根的水平位置（不受内部嵌套容器影响）
-            val vLoc = IntArray(2)
-            val rLoc = IntArray(2)
-            runCatching {
-                v.getLocationInWindow(vLoc)
-                itemRoot.getLocationInWindow(rLoc)
-            }.onFailure { return false }
-            val cx = vLoc[0] + v.width / 2f - rLoc[0]
-            val isLeft = cx <= itemRoot.width / 2f
-            if (dirLogCount.getAndIncrement() < 40) {
-                Logger.i("[$name] [DIR] m=$m vW=${v.width} rootW=${itemRoot.width} vX=${vLoc[0]} rX=${rLoc[0]} cx=$cx isLeft=$isLeft")
-            }
-            val hide = if (m == "incoming") isLeft else !isLeft
-            if (hide) hideAvatarView(v)
-            return true
-        } else {
-            // 找不到 item 根：保守隐藏（避免漏掉头像）
-            if (m == "all") hideAvatarView(v)
+        }
+        if (m == "all") {
+            hideAvatarView(v)
             return true
         }
+
+        // 头像中心相对参照宽度（itemRoot 或根视图）的水平位置：左半=对方，右半=自己
+        val vLoc = IntArray(2)
+        runCatching { v.getLocationInWindow(vLoc) }.onFailure { return false }
+        val cx = vLoc[0] + v.width / 2f
+        val refW: Int
+        val isLeft: Boolean
+        if (itemRoot != null && itemRoot.width > 0) {
+            val rLoc = IntArray(2)
+            runCatching { itemRoot.getLocationInWindow(rLoc) }.onFailure { return false }
+            refW = itemRoot.width
+            isLeft = (cx - rLoc[0]) <= refW / 2f
+        } else {
+            // 找不到 item 根：用根视图宽度（屏幕）判断左右
+            refW = v.rootView?.width ?: 0
+            if (refW <= 0) return false
+            isLeft = cx <= refW / 2f
+        }
+        if (dirLogCount.getAndIncrement() < 40) {
+            Logger.i("[$name] [DIR] m=$m vW=${v.width} refW=$refW vX=${vLoc[0]} cx=$cx isLeft=$isLeft itemRoot=${itemRoot?.javaClass?.name}")
+        }
+        val hide = if (m == "incoming") isLeft else !isLeft
+        if (hide) hideAvatarView(v)
+        return true
     }
 
     /** 向上找消息 item 根 View（RecyclerView 的直接子 View）。 */
