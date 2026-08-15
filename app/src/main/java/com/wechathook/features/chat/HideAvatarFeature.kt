@@ -192,7 +192,7 @@ object HideAvatarFeature : Feature {
             }.onFailure { }
 
             // ---- onVisibilityChanged（ChattingAvatarImageView 自己声明的方法，hook 必生效）：
-            //     可见性变化（如微信重新 bind 置为可见）时按方向压回 ----
+            //     可见性变化（如微信重新 bind 置为可见）时注册布局回调按方向压回 ----
             runCatching {
                 XposedBridge.hookAllMethods(clazz, "onVisibilityChanged", object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
@@ -202,8 +202,7 @@ object HideAvatarFeature : Feature {
                             if (m == "all") {
                                 hideAvatarView(v)
                             } else if (m != "off" && v.visibility == View.VISIBLE) {
-                                // incoming/outgoing：post 到布局完成后按方向判断
-                                v.post { applyDirectionalHide(v) }
+                                scheduleDirectionalCheck(v)
                             }
                         } catch (_: Throwable) {}
                     }
@@ -218,23 +217,54 @@ object HideAvatarFeature : Feature {
     private val dirLogCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     /**
+     * 注册 ViewTreeObserver 布局回调：布局完成后（头像有坐标）按方向判断隐藏。
+     * 判断完成（或明确无需处理）后移除监听；条件未就绪（未布局/未 attach）则保留监听下次再试。
+     */
+    private fun scheduleDirectionalCheck(v: View) {
+        runCatching {
+            val obs = v.viewTreeObserver
+            obs.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                override fun onGlobalLayout() {
+                    val done = applyDirectionalHide(v)
+                    if (done) {
+                        runCatching {
+                            v.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                        }.onFailure { }
+                    }
+                }
+            })
+        }.onFailure { }
+    }
+
+    /**
      * 方向感知隐藏：头像已布局（有坐标）时，
      * 按头像中心相对消息 item 的水平位置判断方向（左=对方，右=自己），
      * 再按模式决定是否隐藏；同时把消息间距应用到 item 根。
+     * @return true=已判断完成；false=条件未就绪（调用方可保留监听重试）
      */
-    private fun applyDirectionalHide(v: View) {
+    private fun applyDirectionalHide(v: View): Boolean {
         val m = mode()
-        if (m == "off") return
+        if (m == "off") return true
 
         val itemRoot = findItemRoot(v)
         if (itemRoot != null) {
             applyItemSpacing(itemRoot)
             if (m == "all") {
                 hideAvatarView(v)
-                return
+                return true
             }
-            if (itemRoot.width <= 0 || v.width <= 0) return
-            if (!v.isAttachedToWindow) return
+            if (itemRoot.width <= 0 || v.width <= 0) {
+                if (dirLogCount.getAndIncrement() < 40) {
+                    Logger.i("[$name] [DIR] 宽度未就绪 rootW=${itemRoot.width} vW=${v.width}")
+                }
+                return false
+            }
+            if (!v.isAttachedToWindow) {
+                if (dirLogCount.getAndIncrement() < 40) {
+                    Logger.i("[$name] [DIR] 未 attach")
+                }
+                return false
+            }
 
             // 用窗口绝对坐标计算头像中心相对消息 item 根的水平位置（不受内部嵌套容器影响）
             val vLoc = IntArray(2)
@@ -242,7 +272,7 @@ object HideAvatarFeature : Feature {
             runCatching {
                 v.getLocationInWindow(vLoc)
                 itemRoot.getLocationInWindow(rLoc)
-            }.onFailure { return }
+            }.onFailure { return false }
             val cx = vLoc[0] + v.width / 2f - rLoc[0]
             val isLeft = cx <= itemRoot.width / 2f
             if (dirLogCount.getAndIncrement() < 40) {
@@ -250,9 +280,11 @@ object HideAvatarFeature : Feature {
             }
             val hide = if (m == "incoming") isLeft else !isLeft
             if (hide) hideAvatarView(v)
+            return true
         } else {
             // 找不到 item 根：保守隐藏（避免漏掉头像）
             if (m == "all") hideAvatarView(v)
+            return true
         }
     }
 
@@ -345,14 +377,12 @@ object HideAvatarFeature : Feature {
                 hideAvatarIn(holderView)
             } else if (m != "off") {
                 // incoming/outgoing：onBindView 时 item 尚未布局（无坐标），
-                // post 到下一帧（布局完成后）再按方向判断。
-                holderView.post {
-                    Views.walk(holderView) { v ->
-                        if (v.javaClass.name == AVATAR_VIEW_CLASS) {
-                            applyDirectionalHide(v)
-                        }
-                        false
+                // 对消息条里的头像注册布局回调，布局完成后按方向判断。
+                Views.walk(holderView) { v ->
+                    if (v.javaClass.name == AVATAR_VIEW_CLASS) {
+                        scheduleDirectionalCheck(v)
                     }
+                    false
                 }
             }
         } catch (t: Throwable) {
