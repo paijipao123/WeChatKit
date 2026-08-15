@@ -461,21 +461,56 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(48)).apply { topMargin = dp(4) }
-            setOnClickListener {
-                Prefs.reload()
-                try {
-                    val p = java.lang.Runtime.getRuntime().exec(
-                        arrayOf("am", "force-stop", "com.tencent.mm")
-                    )
-                    p.waitFor()
-                    android.widget.Toast.makeText(this@MainActivity,
-                        "已重启微信，请重新打开", android.widget.Toast.LENGTH_LONG).show()
-                } catch (e: Throwable) {
-                    android.widget.Toast.makeText(this@MainActivity,
-                        "重启失败: $e", android.widget.Toast.LENGTH_LONG).show()
-                }
+            setOnClickListener { doRestartWechat() }
+        }
+    }
+
+    /** 重启微信：force-stop 后启动 LauncherUI，结果写入日志文件便于排查。 */
+    private fun doRestartWechat() {
+        Prefs.reload()
+        val log = StringBuilder()
+        fun runCmd(cmd: String): Int {
+            return try {
+                val p = java.lang.Runtime.getRuntime().exec(cmd)
+                val out = p.inputStream.bufferedReader().readText().trim()
+                val err = p.errorStream.bufferedReader().readText().trim()
+                val code = p.waitFor()
+                log.append("$cmd\n  exit=$code out=$out err=$err\n")
+                code
+            } catch (e: Throwable) {
+                log.append("$cmd\n  异常: $e\n")
+                -1
             }
         }
+
+        var ok = false
+        try {
+            val r1 = runCmd("am force-stop com.tencent.mm")
+            if (r1 != 0) {
+                // fallback：killBackgroundProcesses（普通权限，但前台进程杀不掉，尽力而为）
+                runCatching {
+                    val am = getSystemService(android.app.ActivityManager::class.java)
+                    am.killBackgroundProcesses("com.tencent.mm")
+                    log.append("fallback killBackgroundProcesses 已调用\n")
+                }
+            }
+            Thread.sleep(600)
+            val r2 = runCmd("am start -n com.tencent.mm/.ui.LauncherUI")
+            ok = r2 == 0
+        } catch (t: Throwable) {
+            log.append("重启异常: $t\n")
+        }
+        // 写日志文件（容器侧可读，排查权限问题）
+        runCatching {
+            val f = java.io.File("/storage/emulated/0/WeChatKit/restart_log.txt")
+            f.parentFile?.mkdirs()
+            f.writeText(log.toString())
+        }
+        android.widget.Toast.makeText(
+            this,
+            if (ok) "微信已重启" else "重启失败，请手动重启微信",
+            android.widget.Toast.LENGTH_LONG
+        ).show()
     }
 
     // ============ 权限 ============
