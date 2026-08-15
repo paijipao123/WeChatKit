@@ -67,22 +67,24 @@ object AvatarTimeFeature : Feature {
                 }
             })
 
-            // setChattingItem：每次绑定消息时刷新时间文本（复用场景时间会变）
+            // setChattingItem：每次绑定消息时刷新时间文本（复用场景时间会变）。
+            // 注意：getMainContainerView 返回的是消息内容子 View（表情/文本等），不含头像，
+            // 必须直接用 g0.avatarIV 字段拿头像、convertView 拿消息条根取时间。
             XposedBridge.hookAllMethods(g0, "setChattingItem", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
-                        val view = runCatching {
-                            (param.thisObject as? Any)?.let { obj ->
-                                XposedHelpers.callMethod(obj, "getMainContainerView") as? View
-                            }
+                        val avatar = runCatching {
+                            XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? View
                         }.getOrNull()
-                        val avatar = view?.let { findAvatar(it) }
                         val tv = avatar?.let { timeViews[it] }
                         if (diagCount.getAndIncrement() < 8) {
-                            Logger.i("[$name] [DIAG] setChattingItem 触发, view=${view?.javaClass?.simpleName}, avatar=${avatar?.javaClass?.simpleName}, hasTv=${tv != null}")
+                            Logger.i("[$name] [DIAG] setChattingItem, avatar=${avatar?.javaClass?.simpleName}, hasTv=${tv != null}")
                         }
-                        if (view == null || avatar == null || tv == null) return
-                        val timeText = getTimeText(view)
+                        if (avatar == null || tv == null) return
+                        val itemRoot = runCatching {
+                            XposedHelpers.getObjectField(param.thisObject, "convertView") as? View
+                        }.getOrNull()
+                        val timeText = itemRoot?.let { getTimeText(it) } ?: ""
                         if (diagCount.getAndIncrement() < 8) {
                             Logger.i("[$name] [DIAG] 时间文本='$timeText'")
                         }

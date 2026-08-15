@@ -76,6 +76,7 @@ class MainActivity : AppCompatActivity() {
                     params = listOf(
                         ParamItem("圆角弧度", "round_avatar_radius",
                             type = "seekbar", min = 1, max = 5, step = 1,
+                            defaultValue = 5,
                             supporting = "5 = 正圆，1 = 接近直角")
                     )),
                 SwitchItem("头像下显示时间",
@@ -186,7 +187,9 @@ class MainActivity : AppCompatActivity() {
         /** seekbar 范围 */
         val min: Int = 0,
         val max: Int = 100,
-        val step: Int = 1
+        val step: Int = 1,
+        /** seekbar 默认值（未配置时显示/保存的初始值） */
+        val defaultValue: Int = 0
     )
 
     data class SwitchItem(
@@ -350,7 +353,7 @@ class MainActivity : AppCompatActivity() {
 
     /** 滑块行：SeekBar + 实时数值显示，拖动即保存。 */
     private fun seekBarRow(p: ParamItem): LinearLayout {
-        val current = Prefs.getInt(p.prefKey, 0).coerceIn(p.min, p.max)
+        val current = Prefs.getInt(p.prefKey, p.defaultValue).coerceIn(p.min, p.max)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val head = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL

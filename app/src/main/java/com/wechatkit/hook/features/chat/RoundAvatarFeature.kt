@@ -36,6 +36,9 @@ object RoundAvatarFeature : Feature {
     private val radius: Float
         get() = (Prefs.getInt("round_avatar_radius", 5).coerceIn(1, 5)) / 10f
 
+    /** draw 诊断计数。 */
+    private val drawDiagCount = java.util.concurrent.atomic.AtomicInteger(0)
+
     override fun hook(classLoader: ClassLoader, finder: DexKitFinder?) {
         if (!Prefs.getBoolean("feat_round_avatar", false)) return
         Logger.i("[$name] 开始 Hook (radius=$radius)")
@@ -58,6 +61,10 @@ object RoundAvatarFeature : Feature {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
                         XposedHelpers.setFloatField(param.thisObject, "s", radius)
+                        if (drawDiagCount.getAndIncrement() < 10) {
+                            val s = XposedHelpers.getFloatField(param.thisObject, "s")
+                            Logger.i("[$name] [DIAG] x.draw 触发, s=$s")
+                        }
                     } catch (_: Throwable) {}
                 }
             })
