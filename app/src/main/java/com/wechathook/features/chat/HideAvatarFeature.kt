@@ -225,6 +225,9 @@ object HideAvatarFeature : Feature {
             val obs = v.viewTreeObserver
             obs.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
                 override fun onGlobalLayout() {
+                    if (dirLogCount.getAndIncrement() < 40) {
+                        Logger.i("[$name] [DIR] 布局回调触发 on ${v.javaClass.name} w=${v.width}")
+                    }
                     val done = applyDirectionalHide(v)
                     if (done) {
                         runCatching {
@@ -490,22 +493,33 @@ object HideAvatarFeature : Feature {
             XposedBridge.hookAllMethods(clazz, "create", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
-                        // 只有 mode=all 才在这里直接隐藏；
-                        // incoming/outgoing 交给 onLayout/onDraw 按方向判断（此处无坐标无法判断方向）
-                        if (mode() != "all") return
+                        val m = mode()
+                        if (m == "off") return
                         val view = param.args[0] as? View ?: return
                         val avatarIv = runCatching {
                             XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? View
                         }.getOrNull()
-                        if (avatarIv != null) {
-                            hideAvatarView(avatarIv)
-                        } else {
-                            Views.walk(view) { v ->
-                                if (v.javaClass.name == AVATAR_VIEW_CLASS) {
-                                    hideAvatarView(v)
+                        if (m == "all") {
+                            if (avatarIv != null) {
+                                hideAvatarView(avatarIv)
+                            } else {
+                                Views.walk(view) { v ->
+                                    if (v.javaClass.name == AVATAR_VIEW_CLASS) {
+                                        hideAvatarView(v)
+                                    }
+                                    false
                                 }
-                                false
                             }
+                        } else {
+                            // incoming/outgoing：注册布局回调，布局完成后按方向判断
+                            val target = avatarIv ?: run {
+                                var found: View? = null
+                                Views.walk(view) { v ->
+                                    if (v.javaClass.name == AVATAR_VIEW_CLASS) { found = v; true } else false
+                                }
+                                found
+                            }
+                            if (target != null) scheduleDirectionalCheck(target)
                         }
                     } catch (_: Throwable) {}
                 }
@@ -515,7 +529,8 @@ object HideAvatarFeature : Feature {
             XposedBridge.hookAllMethods(clazz, "setChattingItem", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
-                        if (mode() != "all") return
+                        val m = mode()
+                        if (m == "off") return
                         val view = runCatching {
                             (param.thisObject as? Any)?.let { obj ->
                                 XposedHelpers.callMethod(obj, "getMainContainerView") as? View
@@ -524,15 +539,26 @@ object HideAvatarFeature : Feature {
                         val avatarIv = runCatching {
                             XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? View
                         }.getOrNull()
-                        if (avatarIv != null) {
-                            hideAvatarView(avatarIv)
-                        } else {
-                            Views.walk(view) { v ->
-                                if (v.javaClass.name == AVATAR_VIEW_CLASS) {
-                                    hideAvatarView(v)
+                        if (m == "all") {
+                            if (avatarIv != null) {
+                                hideAvatarView(avatarIv)
+                            } else {
+                                Views.walk(view) { v ->
+                                    if (v.javaClass.name == AVATAR_VIEW_CLASS) {
+                                        hideAvatarView(v)
+                                    }
+                                    false
                                 }
-                                false
                             }
+                        } else {
+                            val target = avatarIv ?: run {
+                                var found: View? = null
+                                Views.walk(view) { v ->
+                                    if (v.javaClass.name == AVATAR_VIEW_CLASS) { found = v; true } else false
+                                }
+                                found
+                            }
+                            if (target != null) scheduleDirectionalCheck(target)
                         }
                     } catch (_: Throwable) {}
                 }
