@@ -191,13 +191,20 @@ object HideAvatarFeature : Feature {
                 })
             }.onFailure { }
 
-            // ---- onVisibilityChanged（ChattingAvatarImageView 自己声明的方法）：mode=all 压回 ----
+            // ---- onVisibilityChanged（ChattingAvatarImageView 自己声明的方法，hook 必生效）：
+            //     可见性变化（如微信重新 bind 置为可见）时按方向压回 ----
             runCatching {
                 XposedBridge.hookAllMethods(clazz, "onVisibilityChanged", object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
                             val v = param.thisObject as? View ?: return
-                            if (mode() == "all") hideAvatarView(v)
+                            val m = mode()
+                            if (m == "all") {
+                                hideAvatarView(v)
+                            } else if (m != "off" && v.visibility == View.VISIBLE) {
+                                // incoming/outgoing：post 到布局完成后按方向判断
+                                v.post { applyDirectionalHide(v) }
+                            }
                         } catch (_: Throwable) {}
                     }
                 })
@@ -333,9 +340,20 @@ object HideAvatarFeature : Feature {
             if (debugDumpCount.getAndIncrement() < 5) {
                 dumpViewTree(holderView)
             }
-            // 全部隐藏模式：绑定阶段直接隐藏；仅隐藏对方/自己交给 onLayout 方向判断
-            if (mode() == "all") {
+            val m = mode()
+            if (m == "all") {
                 hideAvatarIn(holderView)
+            } else if (m != "off") {
+                // incoming/outgoing：onBindView 时 item 尚未布局（无坐标），
+                // post 到下一帧（布局完成后）再按方向判断。
+                holderView.post {
+                    Views.walk(holderView) { v ->
+                        if (v.javaClass.name == AVATAR_VIEW_CLASS) {
+                            applyDirectionalHide(v)
+                        }
+                        false
+                    }
+                }
             }
         } catch (t: Throwable) {
             Logger.e("[$name] applyHide 异常: $t")
