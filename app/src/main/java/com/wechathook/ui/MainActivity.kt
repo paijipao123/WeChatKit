@@ -48,7 +48,7 @@ class MainActivity : AppCompatActivity() {
 
         // ---- 基础功能卡片 ----
         root.addView(card(
-            "💬 基础功能",
+            "基础功能",
             listOf(
                 SwitchItem("隐藏消息头像",
                     "齿轮里选择隐藏对象，可调消息间距",
@@ -86,7 +86,7 @@ class MainActivity : AppCompatActivity() {
 
         // ---- 红包转账卡片 ----
         root.addView(card(
-            "🧧 红包 / 转账",
+            "红包 / 转账",
             listOf(
                 SwitchItem("自动抢红包",
                     "后台自动拆包/开包（有封号风险）",
@@ -230,12 +230,6 @@ class MainActivity : AppCompatActivity() {
             textSize = 15f
             setTextColor(0xFF1F1F1F.toInt())
         })
-        textCol.addView(TextView(this).apply {
-            text = item.desc
-            textSize = 12f
-            setTextColor(0xFF757575.toInt())
-            setPadding(0, dp(2), 0, 0)
-        })
         val sw = MaterialSwitch(this).apply {
             isChecked = Prefs.getBoolean(item.prefKey, item.default)
             setOnCheckedChangeListener { _, checked ->
@@ -303,7 +297,7 @@ class MainActivity : AppCompatActivity() {
         val scroll = ScrollView(this).apply { addView(bigCard) }
 
         com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
-            .setTitle("⚙️ $title")
+            .setTitle(title)
             .setView(scroll)
             .setPositiveButton("完成", null)
             .show()
