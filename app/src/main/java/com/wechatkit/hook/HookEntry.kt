@@ -39,6 +39,8 @@ class HookEntry : IXposedHookLoadPackage {
             HideAvatarFeature,
             AntiRecallFeature,
             AntiMomentsDeleteFeature,
+            com.wechatkit.hook.features.chat.RoundAvatarFeature,
+            com.wechatkit.hook.features.chat.AvatarTimeFeature,
             AutoRedPacketFeature,
             AutoCollectTransferFeature,
             com.wechatkit.hook.features.system.SignatureBypassFeature,

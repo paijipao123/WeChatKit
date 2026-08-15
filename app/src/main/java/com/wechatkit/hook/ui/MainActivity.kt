@@ -69,6 +69,19 @@ class MainActivity : AppCompatActivity() {
                             "例如: 「{sender}」撤回了一条消息",
                             "占位符: {sender} 发送者 / {time} 时间")
                     )),
+                SwitchItem("圆形头像",
+                    "头像渲染为圆形（可调圆角）",
+                    "feat_${com.wechatkit.hook.features.chat.RoundAvatarFeature.key}",
+                    com.wechatkit.hook.features.chat.RoundAvatarFeature.defaultEnabled(),
+                    params = listOf(
+                        ParamItem("圆角弧度", "round_avatar_radius",
+                            type = "seekbar", min = 1, max = 5, step = 1,
+                            supporting = "5 = 正圆，1 = 接近直角")
+                    )),
+                SwitchItem("头像下显示时间",
+                    "消息头像下方显示发送时间",
+                    "feat_${com.wechatkit.hook.features.chat.AvatarTimeFeature.key}",
+                    com.wechatkit.hook.features.chat.AvatarTimeFeature.defaultEnabled()),
                 SwitchItem("朋友圈防删",
                     "阻止他人删除朋友圈后消失",
                     "feat_${AntiMomentsDeleteFeature.key}", AntiMomentsDeleteFeature.defaultEnabled()),

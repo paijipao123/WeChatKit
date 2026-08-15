@@ -359,7 +359,7 @@ object HideAvatarFeature : Feature {
         return null
     }
 
-    /** 把配置的消息间距（dp）应用到 item 根 View 的上下 margin。 */
+    /** 把配置的消息间距（dp）应用到 item 根 View 的上下 margin（值不变时不重设，避免触发无谓重布局）。 */
     private fun applyItemSpacing(itemRoot: View) {
         val sp = itemSpacing
         if (sp <= 0) return
@@ -367,11 +367,30 @@ object HideAvatarFeature : Feature {
             val lp = itemRoot.layoutParams
             if (lp is ViewGroup.MarginLayoutParams) {
                 val px = (sp * android.content.res.Resources.getSystem().displayMetrics.density).toInt()
-                lp.topMargin = px
-                lp.bottomMargin = px
-                itemRoot.layoutParams = lp
+                if (lp.topMargin != px || lp.bottomMargin != px) {
+                    lp.topMargin = px
+                    lp.bottomMargin = px
+                    itemRoot.layoutParams = lp
+                }
             }
         }
+    }
+
+    /**
+     * 持久应用消息间距：立即设置一次，并注册布局回调，每次布局后重设——
+     * 微信在 bind/布局阶段可能重置 item 根 margins（表现为"只调消息不调头像"或间距丢失）。
+     */
+    private fun applyItemSpacingPersistent(itemRoot: View) {
+        applyItemSpacing(itemRoot)
+        runCatching {
+            val obs = itemRoot.viewTreeObserver
+            obs.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                override fun onGlobalLayout() {
+                    // 每次布局后重设间距（值相同则不触发重布局，安全）
+                    applyItemSpacing(itemRoot)
+                }
+            })
+        }.onFailure { }
     }
 
     /** 直接 hook 微信头像 View 类。 */
@@ -543,13 +562,13 @@ object HideAvatarFeature : Feature {
             val clazz = XposedHelpers.findClass(className, classLoader)
             Logger.i("[$name] 找到消息项控制器: $className")
 
-            // create(View): 每次消息项创建 View 时, 隐藏其中的头像 + 应用消息间距
+            // create(View): 每次消息项创建 View 时, 隐藏其中的头像 + 持久应用消息间距
             XposedBridge.hookAllMethods(clazz, "create", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
-                        // 消息条根 View：间距和头像处理都基于它
+                        // 消息条根 View（含头像+气泡）：间距和头像处理都基于它
                         val view = param.args[0] as? View ?: return
-                        applyItemSpacing(view)
+                        applyItemSpacingPersistent(view)
                         val m = mode()
                         if (m == "off") return
                         val avatarIv = runCatching {
@@ -585,12 +604,15 @@ object HideAvatarFeature : Feature {
             XposedBridge.hookAllMethods(clazz, "setChattingItem", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
+                        // 优先用 convertView（消息条根，含头像+气泡），fallback 到 getMainContainerView
                         val view = runCatching {
+                            XposedHelpers.getObjectField(param.thisObject, "convertView") as? View
+                        }.getOrNull() ?: runCatching {
                             (param.thisObject as? Any)?.let { obj ->
                                 XposedHelpers.callMethod(obj, "getMainContainerView") as? View
                             }
                         }.getOrNull() ?: return
-                        applyItemSpacing(view)
+                        applyItemSpacingPersistent(view)
                         val m = mode()
                         if (m == "off") return
                         val avatarIv = runCatching {
