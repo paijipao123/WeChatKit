@@ -543,13 +543,15 @@ object HideAvatarFeature : Feature {
             val clazz = XposedHelpers.findClass(className, classLoader)
             Logger.i("[$name] 找到消息项控制器: $className")
 
-            // create(View): 每次消息项创建 View 时, 隐藏其中的头像
+            // create(View): 每次消息项创建 View 时, 隐藏其中的头像 + 应用消息间距
             XposedBridge.hookAllMethods(clazz, "create", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
+                        // 消息条根 View：间距和头像处理都基于它
+                        val view = param.args[0] as? View ?: return
+                        applyItemSpacing(view)
                         val m = mode()
                         if (m == "off") return
-                        val view = param.args[0] as? View ?: return
                         val avatarIv = runCatching {
                             XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? View
                         }.getOrNull()
@@ -583,13 +585,14 @@ object HideAvatarFeature : Feature {
             XposedBridge.hookAllMethods(clazz, "setChattingItem", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
-                        val m = mode()
-                        if (m == "off") return
                         val view = runCatching {
                             (param.thisObject as? Any)?.let { obj ->
                                 XposedHelpers.callMethod(obj, "getMainContainerView") as? View
                             }
                         }.getOrNull() ?: return
+                        applyItemSpacing(view)
+                        val m = mode()
+                        if (m == "off") return
                         val avatarIv = runCatching {
                             XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? View
                         }.getOrNull()
