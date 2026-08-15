@@ -79,10 +79,16 @@ class MainActivity : AppCompatActivity() {
                             defaultValue = 5,
                             supporting = "5 = 正圆，1 = 接近直角")
                     )),
-                SwitchItem("头像下显示时间",
-                    "消息头像下方显示发送时间",
+                SwitchItem("消息时间显示",
+                    "消息发送时间（头像下方/消息下方）",
                     "feat_${com.wechatkit.hook.features.chat.AvatarTimeFeature.key}",
-                    com.wechatkit.hook.features.chat.AvatarTimeFeature.defaultEnabled()),
+                    com.wechatkit.hook.features.chat.AvatarTimeFeature.defaultEnabled(),
+                    params = listOf(
+                        ParamItem("显示位置", "avatar_time_mode",
+                            type = "choice",
+                            options = listOf("头像下方", "消息下方"),
+                            optionValues = listOf("avatar", "message"))
+                    )),
                 SwitchItem("朋友圈防删",
                     "阻止他人删除朋友圈后消失",
                     "feat_${AntiMomentsDeleteFeature.key}", AntiMomentsDeleteFeature.defaultEnabled()),
