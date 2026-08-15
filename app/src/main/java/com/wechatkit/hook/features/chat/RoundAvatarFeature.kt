@@ -6,15 +6,20 @@ import com.wechatkit.hook.core.Logger
 import com.wechatkit.hook.core.Prefs
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
+import de.robv.android.xposed.XposedHelpers
 
 /**
- * 圆形头像。
+ * 圆形头像（全局）。
  *
- * 微信头像统一通过 `com.tencent.mm.pluginsdk.ui.u.b(ImageView, String, float, boolean)`
- * 加载（特征串 "MicroMsg.AvatarDrawable"），第 3 个 float 参数是头像圆角因子：
- * 0.5 = 正圆，0.1 = 接近直角。hook 它把圆角因子改成配置值即可全局生效。
+ * 微信头像 Drawable 统一为 `com.tencent.mm.pluginsdk.ui.x`：
+ * - 字段 `s`（float）= 圆角半径比例，绘制时 `radius = s * 宽`（0.5 = 正圆）；
+ * - `draw(Canvas)` 内按 s 画圆角矩形/圆形。
  *
- * 参考：WeKit RoundAvatars。
+ * 为了"全局生效、不局限于聊天"且不被微信覆盖：
+ * 1. hook `x` 构造 → 强制 s = 圆角因子；
+ * 2. hook `x.draw`（每次绘制前）→ 强制 s = 圆角因子，任何头像（聊天/会话列表/资料页/群成员）
+ *    绘制时都会被压成圆；
+ * 3. 保留头像加载入口 `pluginsdk.ui.u` 的 float 参数修改（双保险）。
  */
 object RoundAvatarFeature : Feature {
 
@@ -36,33 +41,51 @@ object RoundAvatarFeature : Feature {
         Logger.i("[$name] 开始 Hook (radius=$radius)")
         if (finder == null) return
 
-        // 主方法：头像加载（参数 2 为圆角因子）
-        val methods = runCatching {
-            finder.findMethodsByStrings(
-                classLoader,
-                declaredClassName = "com.tencent.mm.pluginsdk.ui.u",
-                onlyPackages = listOf("com.tencent.mm"),
-                strings = arrayOf("MicroMsg.AvatarDrawable")
-            )
-        }.getOrDefault(emptyList())
+        // ---- 1. 头像 Drawable 类 x：构造 + 绘制强制圆角（全局） ----
+        runCatching {
+            val xCls = XposedHelpers.findClass("com.tencent.mm.pluginsdk.ui.x", classLoader)
 
-        if (methods.isEmpty()) {
-            Logger.w("[$name] 未定位到头像加载方法")
-            return
-        }
+            XposedBridge.hookAllConstructors(xCls, object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        XposedHelpers.setFloatField(param.thisObject, "s", radius)
+                    } catch (_: Throwable) {}
+                }
+            })
+            Logger.i("[$name] x 构造强制圆角已挂载")
 
-        methods.take(4).forEach { method ->
-            runCatching {
-                XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        // args: (ImageView, String, float, boolean)
-                        if (param.args.size > 2 && param.args[2] is Float) {
-                            param.args[2] = radius
+            XposedBridge.hookAllMethods(xCls, "draw", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        XposedHelpers.setFloatField(param.thisObject, "s", radius)
+                    } catch (_: Throwable) {}
+                }
+            })
+            Logger.i("[$name] x.draw 强制圆角已挂载（全局）")
+        }.onFailure { Logger.e("[$name] x 类 hook 失败: $it") }
+
+        // ---- 2. 头像加载入口 u#b 的 float 参数（双保险） ----
+        if (finder != null) {
+            val methods = runCatching {
+                finder.findMethodsByStrings(
+                    classLoader,
+                    declaredClassName = "com.tencent.mm.pluginsdk.ui.u",
+                    onlyPackages = listOf("com.tencent.mm"),
+                    strings = arrayOf("MicroMsg.AvatarDrawable")
+                )
+            }.getOrDefault(emptyList())
+            methods.take(4).forEach { method ->
+                runCatching {
+                    XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            if (param.args.size > 2 && param.args[2] is Float) {
+                                param.args[2] = radius
+                            }
                         }
-                    }
-                })
-                Logger.i("[$name] 已生效: ${method.declaringClass.name}#${method.name}")
-            }.onFailure { Logger.e("[$name] hook 失败: $it") }
+                    })
+                    Logger.i("[$name] 加载入口已生效: ${method.declaringClass.name}#${method.name}")
+                }.onFailure { }
+            }
         }
     }
 }

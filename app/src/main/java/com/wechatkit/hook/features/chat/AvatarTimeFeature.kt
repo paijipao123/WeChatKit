@@ -56,9 +56,14 @@ object AvatarTimeFeature : Feature {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
                         val view = param.args[0] as? View ?: return
-                        val avatar = findAvatar(view) ?: return
-                        ensureTimeWrapper(avatar)
-                    } catch (_: Throwable) {}
+                        val avatar = findAvatar(view)
+                        if (diagCount.getAndIncrement() < 8) {
+                            Logger.i("[$name] [DIAG] create 触发, view=${view.javaClass.simpleName}, avatar=${avatar?.javaClass?.simpleName}")
+                        }
+                        if (avatar != null) ensureTimeWrapper(avatar)
+                    } catch (e: Throwable) {
+                        if (diagCount.getAndIncrement() < 8) Logger.e("[$name] [DIAG] create 异常: $e")
+                    }
                 }
             })
 
@@ -70,16 +75,22 @@ object AvatarTimeFeature : Feature {
                             (param.thisObject as? Any)?.let { obj ->
                                 XposedHelpers.callMethod(obj, "getMainContainerView") as? View
                             }
-                        }.getOrNull() ?: return
-                        val avatar = findAvatar(view) ?: return
-                        val tv = timeViews[avatar] ?: return
+                        }.getOrNull()
+                        val avatar = view?.let { findAvatar(it) }
+                        val tv = avatar?.let { timeViews[it] }
+                        if (diagCount.getAndIncrement() < 8) {
+                            Logger.i("[$name] [DIAG] setChattingItem 触发, view=${view?.javaClass?.simpleName}, avatar=${avatar?.javaClass?.simpleName}, hasTv=${tv != null}")
+                        }
+                        if (view == null || avatar == null || tv == null) return
                         val timeText = getTimeText(view)
-                        if (diagCount.getAndIncrement() < 5) {
+                        if (diagCount.getAndIncrement() < 8) {
                             Logger.i("[$name] [DIAG] 时间文本='$timeText'")
                         }
                         tv.text = timeText
                         tv.visibility = if (timeText.isEmpty()) View.GONE else View.VISIBLE
-                    } catch (_: Throwable) {}
+                    } catch (e: Throwable) {
+                        if (diagCount.getAndIncrement() < 8) Logger.e("[$name] [DIAG] setChattingItem 异常: $e")
+                    }
                 }
             })
 
