@@ -20,7 +20,6 @@ import com.wechathook.features.chat.HideAvatarFeature
 import com.wechathook.features.money.AutoCollectTransferFeature
 import com.wechathook.features.money.AutoRedPacketFeature
 import com.wechathook.features.moments.AntiMomentsDeleteFeature
-import com.wechathook.features.readreceipt.ReadReceiptFeature
 
 /**
  * 模块设置页（Material3 风格）。
@@ -102,20 +101,6 @@ class MainActivity : AppCompatActivity() {
                     params = listOf(
                         ParamItem("收款延迟（毫秒）", "auto_collect_delay", "默认 1000"),
                         ParamItem("屏蔽名单", "blocked_talkers", "逗号分隔昵称/微信号")
-                    )),
-            )
-        ))
-
-        // ---- 已读回执卡片 ----
-        root.addView(card(
-            "👁 已读回执",
-            listOf(
-                SwitchItem("已读回执",
-                    "配合 read-receipt-tracker 服务显示\"已读 X 人\"",
-                    "feat_${ReadReceiptFeature.key}", ReadReceiptFeature.defaultEnabled(),
-                    params = listOf(
-                        ParamItem("服务器地址", "read_receipt_server",
-                            "例如 http://192.168.1.10:8080")
                     )),
             )
         ))

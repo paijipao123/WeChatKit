@@ -9,7 +9,6 @@ import com.wechathook.features.chat.HideAvatarFeature
 import com.wechathook.features.money.AutoCollectTransferFeature
 import com.wechathook.features.money.AutoRedPacketFeature
 import com.wechathook.features.moments.AntiMomentsDeleteFeature
-import com.wechathook.features.readreceipt.ReadReceiptFeature
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
@@ -40,7 +39,6 @@ class HookEntry : IXposedHookLoadPackage {
             HideAvatarFeature,
             AntiRecallFeature,
             AntiMomentsDeleteFeature,
-            ReadReceiptFeature,
             AutoRedPacketFeature,
             AutoCollectTransferFeature,
             com.wechathook.features.system.SignatureBypassFeature,
