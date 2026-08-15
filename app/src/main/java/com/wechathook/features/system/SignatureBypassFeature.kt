@@ -95,6 +95,26 @@ object SignatureBypassFeature : Feature {
                 })
                 Logger.i("[$name] hasSigningCertificate 已挂载")
             }.onFailure { }
+
+            // 3. 第三方 App 通过微信登录（OpenSDK OAuth）的签名校验绕过：
+            //    微信侧 validateAppSignature / validateAppSignatureForPackage 校验调用方
+            //    App 的签名，嵌入版里 App 签名与开放平台注册不符会授权失败，直接放行。
+            listOf(
+                "com.tencent.mm.opensdk.openapi.WXApiImplComm",
+                "com.tencent.mm.opensdk.openapi.BaseWXApiImplV10"
+            ).forEach { clsName ->
+                runCatching {
+                    val cls = XposedHelpers.findClass(clsName, classLoader)
+                    val oauthHook = object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            param.setResult(true)
+                        }
+                    }
+                    runCatching { XposedBridge.hookAllMethods(cls, "validateAppSignature", oauthHook) }.onFailure { }
+                    runCatching { XposedBridge.hookAllMethods(cls, "validateAppSignatureForPackage", oauthHook) }.onFailure { }
+                    Logger.i("[$name] OpenSDK 授权签名校验绕过已挂载: $clsName")
+                }.onFailure { Logger.e("[$name] OpenSDK hook 失败 $clsName: $it") }
+            }
         }.onFailure { Logger.e("[$name] Hook 失败: $it") }
     }
 
