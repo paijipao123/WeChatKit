@@ -260,7 +260,7 @@ object AvatarTimeFeature : Feature {
         }
     }
 
-    /** dump holder 所有字段类型和值摘要（找 MsgInfo 引用链）。 */
+    /** dump holder 所有字段类型和值摘要，并尝试对每个对象字段读 field_createTime。 */
     private fun dumpHolder(tag: Any): String {
         val sb = StringBuilder("${tag.javaClass.name} ")
         try {
@@ -277,68 +277,21 @@ object AvatarTimeFeature : Feature {
                             null -> "null"
                             is String -> "Str(${v.take(8)})"
                             is Number -> "${v.javaClass.simpleName}($v)"
+                            is View -> "V:${v.javaClass.simpleName}"
                             else -> v.javaClass.name.substringAfterLast('.')
                         }
-                        sb.append(f.name).append(":").append(f.type.simpleName).append("=").append(desc).append(" | ")
+                        sb.append(f.name).append(":").append(f.type.simpleName).append("=").append(desc)
+                        // 对象字段：尝试直接读 field_createTime
+                        if (v != null && v !is String && v !is Number && v !is View) {
+                            val ct = readCreateTimeSec(v)
+                            if (ct > 0) sb.append("[createTime=").append(ct).append("]")
+                        }
+                        sb.append(" | ")
                     } catch (_: Throwable) {}
                 }
                 clazz = clazz.superclass
             }
         } catch (_: Throwable) {}
-        // chattingItem 实例的完整类名 + 字段（找 createTime 引用）
-        runCatching {
-            val f = tag.javaClass.getDeclaredField("chattingItem")
-            f.isAccessible = true
-            val ci = f.get(tag) ?: return sb.toString()
-            sb.append("\nchattingItem 实例: ${ci.javaClass.name} 字段: ")
-            var c2: Class<*>? = ci.javaClass
-            var n = 0
-            while (c2 != null && c2 != Any::class.java && n < 40) {
-                for (f2 in c2.declaredFields) {
-                    if (++n > 40) break
-                    if (java.lang.reflect.Modifier.isStatic(f2.modifiers)) continue
-                    try {
-                        f2.isAccessible = true
-                        val v2 = f2.get(ci)
-                        val d2 = when (v2) {
-                            null -> "null"
-                            is String -> "Str(${v2.take(8)})"
-                            is Number -> "${v2.javaClass.simpleName}($v2)"
-                            else -> v2.javaClass.name.substringAfterLast('.')
-                        }
-                        sb.append(f2.name).append(":").append(f2.type.simpleName).append("=").append(d2).append(" | ")
-                    } catch (_: Throwable) {}
-                }
-                c2 = c2.superclass
-            }
-        }
-        // chatHolder 实例字段（消息数据常挂在这）
-        runCatching {
-            val f = tag.javaClass.getDeclaredField("chatHolder")
-            f.isAccessible = true
-            val ch = f.get(tag) ?: return sb.toString()
-            sb.append("\nchatHolder 实例: ${ch.javaClass.name} 字段: ")
-            var c3: Class<*>? = ch.javaClass
-            var n3 = 0
-            while (c3 != null && c3 != Any::class.java && n3 < 60) {
-                for (f3 in c3.declaredFields) {
-                    if (++n3 > 60) break
-                    if (java.lang.reflect.Modifier.isStatic(f3.modifiers)) continue
-                    try {
-                        f3.isAccessible = true
-                        val v3 = f3.get(ch)
-                        val d3 = when (v3) {
-                            null -> "null"
-                            is String -> "Str(${v3.take(8)})"
-                            is Number -> "${v3.javaClass.simpleName}($v3)"
-                            else -> v3.javaClass.name.substringAfterLast('.')
-                        }
-                        sb.append(f3.name).append(":").append(f3.type.simpleName).append("=").append(d3).append(" | ")
-                    } catch (_: Throwable) {}
-                }
-                c3 = c3.superclass
-            }
-        }
         return sb.toString()
     }
 
