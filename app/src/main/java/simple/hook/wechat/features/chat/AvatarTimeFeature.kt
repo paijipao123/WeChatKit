@@ -44,6 +44,9 @@ object AvatarTimeFeature : Feature {
     /** item 根 -> 气泡下方时间 TextView（弱引用）。 */
     private val msgTimeViews = java.util.Collections.synchronizedMap(java.util.WeakHashMap<View, TextView>())
 
+    /** getItem 参数 -> createTime(秒) 映射。 */
+    private val itemTimeMap = java.util.Collections.synchronizedMap(java.util.LinkedHashMap<Int, Long>())
+
     private val diagCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     override fun hook(classLoader: ClassLoader, finder: DexKitFinder?) {
@@ -77,6 +80,29 @@ object AvatarTimeFeature : Feature {
             }.onFailure { Logger.e("[$name] onBindView Hook 失败: $it") }
         }
 
+        // g0.setChattingItem 主路径(8.0.76 实际绑定入口)
+        hookG0(classLoader)
+
+        // ChattingDataAdapter.getItem -> position/time 映射
+        runCatching {
+            val adapterCls = classLoader.loadClass("com.tencent.mm.ui.chatting.adapter.ChattingDataAdapter")
+            XposedBridge.hookAllMethods(adapterCls, "getItem", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val mi = param.result ?: return
+                        val ct = readCreateTimeSec(mi)
+                        if (ct <= 0) return
+                        val key = (param.args.getOrNull(0) as? Int) ?: return
+                        // LRU 上限
+                        if (itemTimeMap.size > 5000) itemTimeMap.clear()
+                        itemTimeMap[key] = ct
+                        if (diagCount.get() < 6) Logger.i("[$name] [DIAG] getItem($key) ct=$ct")
+                    } catch (_: Throwable) {}
+                }
+            })
+            Logger.i("[$name] 已 Hook ChattingDataAdapter.getItem 映射")
+        }.onFailure { Logger.e("[$name] getItem hook 失败: $it") }
+
         // fallback: 类名+onBindView（与 HideAvatarFeature 同款）
         if (methods.isEmpty()) {
             val clsNames = runCatching {
@@ -104,7 +130,128 @@ object AvatarTimeFeature : Feature {
         }
     }
 
-    // ============ 核心：onBindView 处理 ============
+    // ============ 核心：消息绑定处理 ============
+
+    /** g0.setChattingItem 主路径（8.0.76 绑定实际走这里）。 */
+    private fun hookG0(classLoader: ClassLoader) {
+        val g0 = runCatching {
+            XposedHelpers.findClass("com.tencent.mm.ui.chatting.viewitems.g0", classLoader)
+        }.getOrNull() ?: return
+        XposedBridge.hookAllMethods(g0, "setChattingItem", object : XC_MethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                try {
+                    handleG0Bind(param, classLoader)
+                } catch (t: Throwable) {
+                    if (diagCount.getAndIncrement() < 10) Logger.e("[$name] g0 处理异常: $t")
+                }
+            }
+        })
+        Logger.i("[$name] 已 Hook g0.setChattingItem")
+    }
+
+    private fun handleG0Bind(param: XC_MethodHook.MethodHookParam, classLoader: ClassLoader) {
+        val g0 = param.thisObject ?: return
+        val holderView = findFieldByNameInHierarchy(g0, "convertView") as? View ?: return
+
+        // 参数 dump(找 MsgInfo 入口)
+        if (diagCount.get() < 3) {
+            val sb = StringBuilder("setChattingItem 参数: ")
+            param.args.forEachIndexed { idx, a ->
+                val d = when (a) {
+                    null -> "null"
+                    is String -> "Str(${a.take(12)})"
+                    is Number -> "${a.javaClass.simpleName}($a)"
+                    is View -> "V:${a.javaClass.simpleName}"
+                    else -> a.javaClass.name.substringAfterLast('.')
+                }
+                sb.append("[$idx]${a?.javaClass?.name ?: ""}=$d | ")
+                if (a != null && a !is String && a !is Number && a !is View) {
+                    val ct = readCreateTimeSec(a)
+                    if (ct > 0) sb.append("[ct=$ct]")
+                }
+            }
+            Logger.i("[$name] [DIAG] $sb")
+        }
+
+        // 时间来源:
+        // A) setChattingItem 参数里的 MsgInfo
+        var createTimeSec = 0L
+        for (a in param.args) {
+            if (a != null && a !is String && a !is Number && a !is View) {
+                createTimeSec = readCreateTimeSec(a)
+                if (createTimeSec > 0) break
+            }
+        }
+        // B) g0 对象图里递归找 field_createTime
+        if (createTimeSec <= 0) {
+            createTimeSec = findCreateTimeInGraph(g0, 0, java.util.HashSet())
+        }
+        // C) chatHolder(adapter.o) 的 position -> getItem 映射
+        if (createTimeSec <= 0) {
+            val chatHolder = findFieldByNameInHierarchy(g0, "chatHolder")
+            val pos = chatHolder?.let { ch ->
+                runCatching {
+                    val m = ch.javaClass.methods.firstOrNull { it.name == "getAdapterPosition" && it.parameterCount == 0 }
+                    m?.invoke(ch) as? Int
+                }.getOrNull()
+            }
+            if (pos != null && pos >= 0) {
+                createTimeSec = itemTimeMap.remove(pos) ?: itemTimeMap[pos] ?: 0L
+                if (diagCount.get() < 6) Logger.i("[$name] [DIAG] pos=$pos -> ct=$createTimeSec")
+            }
+        }
+
+        if (diagCount.getAndIncrement() < 10) {
+            Logger.i("[$name] [DIAG] createTime=$createTimeSec")
+        }
+        if (createTimeSec <= 0) return
+
+        val timeText = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(createTimeSec * 1000))
+
+        if (mode() == "message") {
+            ensureMsgTimeBelowBubble(holderView, timeText)
+        } else {
+            ensureAvatarTime(holderView, timeText)
+        }
+    }
+
+    /** 对象图递归找 field_createTime（秒）。 */
+    private fun findCreateTimeInGraph(obj: Any?, depth: Int, visited: java.util.HashSet<Int>): Long {
+        if (obj == null || depth > 3 || visited.size > 300) return 0
+        if (obj is String || obj is Number || obj is Boolean || obj is Char ||
+            obj is android.graphics.drawable.Drawable || obj is View || obj is android.app.Activity
+        ) return 0
+        val id = System.identityHashCode(obj)
+        if (!visited.add(id)) return 0
+        var c: Class<*>? = obj.javaClass
+        var checked = 0
+        while (c != null && c != Any::class.java && checked < 30) {
+            for (f in c.declaredFields) {
+                if (++checked > 200) return 0
+                if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                try {
+                    f.isAccessible = true
+                    val t = f.type
+                    if (t == java.lang.Long.TYPE && f.name == "field_createTime") {
+                        val v = f.getLong(obj)
+                        if (v in 1_000_000_000L..2_500_000_000L) return v
+                    }
+                    if (!t.isPrimitive && !t.isArray && !t.name.startsWith("java.") &&
+                        !t.name.startsWith("android.") && !t.name.startsWith("kotlin.")
+                    ) {
+                        val child = f.get(obj) ?: continue
+                        val r = findCreateTimeInGraph(child, depth + 1, visited)
+                        if (r > 0) return r
+                    }
+                } catch (_: Throwable) {}
+            }
+            c = c.superclass
+        }
+        return 0
+    }
+
+    // ============ onBindView 路径(部分版本微信) ============
 
     private fun handleOnBindView(param: XC_MethodHook.MethodHookParam, classLoader: ClassLoader) {
         val holder = param.args.getOrNull(0) ?: return
