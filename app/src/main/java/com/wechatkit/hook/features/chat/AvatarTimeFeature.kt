@@ -106,11 +106,30 @@ object AvatarTimeFeature : Feature {
                         }
 
                         if (mode() == "avatar") {
-                            val tv = avatarTimeViews[avatar] ?: return
+                            // 微信绑定数据可能重建 item 内部结构，把我们的 wrapper 移除；
+                            // 若 tv 不在视图树里，重新注入
+                            var tv = avatarTimeViews[avatar]
+                            if (tv != null && tv.parent == null) {
+                                avatarTimeViews.remove(avatar)
+                                tv = null
+                            }
+                            if (tv == null && itemRoot != null) {
+                                ensureTimeWrapper(avatar)
+                                tv = avatarTimeViews[avatar] ?: return
+                            }
                             tv.text = timeText
                             tv.visibility = if (timeText.isEmpty()) View.GONE else View.VISIBLE
                         } else {
-                            val tv = msgTimeViews[avatar] ?: return
+                            // 同理：tv 不在视图树则重新注入气泡容器
+                            var tv = msgTimeViews[avatar]
+                            if (tv != null && tv.parent == null) {
+                                msgTimeViews.remove(avatar)
+                                tv = null
+                            }
+                            if (tv == null && itemRoot != null) {
+                                ensureMessageTimeView(itemRoot, avatar)
+                                tv = msgTimeViews[avatar] ?: return
+                            }
                             tv.text = timeText
                             tv.visibility = if (timeText.isEmpty()) View.GONE else View.VISIBLE
                             tv.gravity = if (isLeftAvatar(avatar)) Gravity.START else Gravity.END

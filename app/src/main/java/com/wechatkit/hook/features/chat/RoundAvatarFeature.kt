@@ -58,12 +58,28 @@ object RoundAvatarFeature : Feature {
     private val canvasSaves =
         java.util.Collections.synchronizedMap(java.util.IdentityHashMap<Canvas, Int>())
 
+    /** 给头像 View 设置圆形 outline + clipToOutline（View 级圆形裁剪，硬件加速下可靠）。 */
+    private fun applyRoundOutline(v: android.view.View) {
+        if (v.clipToOutline && v.outlineProvider != null) return  // 已设置过
+        v.outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(view: android.view.View, outline: android.graphics.Outline) {
+                if (view.width <= 0 || view.height <= 0) return
+                val r = min(view.width, view.height) / 2f
+                outline.setOval(0, 0, view.width, view.height)
+            }
+        }
+        v.clipToOutline = true
+    }
+
     override fun hook(classLoader: ClassLoader, finder: DexKitFinder?) {
         if (!Prefs.getBoolean("feat_round_avatar", false)) return
         Logger.i("[$name] 开始 Hook (radius=$radius)")
         if (finder == null) return
 
         // ---- 0. 头像 View 圆形裁剪兜底（OutlineProvider + clipToOutline，硬件加速下可靠） ----
+        // 注意：ta5.d.draw 里的 canvas.clipPath 圆形在硬件加速 Canvas 上无效，
+        // View 级 clipToOutline 才是可靠方案。构造时尺寸未定 + 微信可能覆盖 outline，
+        // 因此在每次 setImageDrawable（设置头像图片）后强制重新设置圆形 outline。
         runCatching {
             val avatarCls = XposedHelpers.findClass(
                 "com.tencent.mm.ui.chatting.view.ChattingAvatarImageView", classLoader)
@@ -71,23 +87,31 @@ object RoundAvatarFeature : Feature {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
                         val v = param.thisObject as? android.view.View ?: return
-                        // 圆形 outline：半径 = 短边一半
-                        v.outlineProvider = object : android.view.ViewOutlineProvider() {
-                            override fun getOutline(view: android.view.View, outline: android.graphics.Outline) {
-                                val r = min(view.width, view.height) / 2f
-                                outline.setOval(0, 0, view.width, view.height)
-                            }
+                        applyRoundOutline(v)
+                        v.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                            applyRoundOutline(v)
                         }
-                        v.clipToOutline = true
-                        // 尺寸变化时刷新 outline
-                        v.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> v.invalidateOutline() }
                         if (ctorDiagCount.getAndIncrement() < 10) {
-                            Logger.i("[$name] [DIAG] ChattingAvatarImageView 圆形 clipToOutline 已设置")
+                            Logger.i("[$name] [DIAG] ChattingAvatarImageView 构造: 圆形 outline 已设置")
                         }
                     } catch (_: Throwable) {}
                 }
             })
-            Logger.i("[$name] ChattingAvatarImageView 圆形裁剪兜底已挂载")
+
+            // 每次设置头像图片后强制圆形 outline（微信绑定数据时可能覆盖）
+            XposedBridge.hookAllMethods(avatarCls, "setImageDrawable", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val v = param.thisObject as? android.view.View ?: return
+                        applyRoundOutline(v)
+                        if (ctorDiagCount.getAndIncrement() < 20) {
+                            Logger.i("[$name] [DIAG] setImageDrawable 后强制圆形 outline w=${v.width} h=${v.height}")
+                        }
+                    } catch (_: Throwable) {}
+                }
+            })
+
+            Logger.i("[$name] ChattingAvatarImageView 圆形裁剪兜底已挂载（构造 + setImageDrawable）")
         }.onFailure { Logger.e("[$name] 头像 View outline hook 失败: $it") }
 
         // ---- 1. 消息头像 drawable：ta5.d（包 ta5 下的独立类 d，非内部类） ----
