@@ -11,6 +11,7 @@ import simple.hook.wechat.core.Logger
 import simple.hook.wechat.core.Prefs
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
+import de.robv.android.xposed.XposedHelpers
 
 /**
  * 消息时间显示（两种模式）。参考 WeKit MessageTimeEnhancements 方案：
