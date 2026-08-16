@@ -351,7 +351,7 @@ object AvatarTimeFeature : Feature {
         }
         // dump j:y 和 l:ArrayList 实例内容
         runCatching {
-            var cl: Class<*>? = tag.javaClass
+            var cl: Class<in Any>? = tag.javaClass
             while (cl != null && cl != Any::class.java) {
                 val clazz = cl
                 for (f in clazz.declaredFields) {
@@ -418,7 +418,7 @@ object AvatarTimeFeature : Feature {
         }
         // 深度 dump: chatHolder 与 chattingItem 实例的完整字段值(找时间戳)
         runCatching {
-            var cl: Class<*>? = tag.javaClass
+            var cl: Class<in Any>? = tag.javaClass
             while (cl != null && cl != Any::class.java) {
                 val clazz = cl
                 for (f in clazz.declaredFields) {
