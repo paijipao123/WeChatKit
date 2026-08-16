@@ -312,6 +312,33 @@ object AvatarTimeFeature : Feature {
                 c2 = c2.superclass
             }
         }
+        // chatHolder 实例字段（消息数据常挂在这）
+        runCatching {
+            val f = tag.javaClass.getDeclaredField("chatHolder")
+            f.isAccessible = true
+            val ch = f.get(tag) ?: return sb.toString()
+            sb.append("\nchatHolder 实例: ${ch.javaClass.name} 字段: ")
+            var c3: Class<*>? = ch.javaClass
+            var n3 = 0
+            while (c3 != null && c3 != Any::class.java && n3 < 60) {
+                for (f3 in c3.declaredFields) {
+                    if (++n3 > 60) break
+                    if (java.lang.reflect.Modifier.isStatic(f3.modifiers)) continue
+                    try {
+                        f3.isAccessible = true
+                        val v3 = f3.get(ch)
+                        val d3 = when (v3) {
+                            null -> "null"
+                            is String -> "Str(${v3.take(8)})"
+                            is Number -> "${v3.javaClass.simpleName}($v3)"
+                            else -> v3.javaClass.name.substringAfterLast('.')
+                        }
+                        sb.append(f3.name).append(":").append(f3.type.simpleName).append("=").append(d3).append(" | ")
+                    } catch (_: Throwable) {}
+                }
+                c3 = c3.superclass
+            }
+        }
         return sb.toString()
     }
 
