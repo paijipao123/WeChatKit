@@ -353,7 +353,8 @@ object AvatarTimeFeature : Feature {
         runCatching {
             var cl: Class<*>? = tag.javaClass
             while (cl != null && cl != Any::class.java) {
-                for (f in cl.declaredFields) {
+                val clazz = cl
+                for (f in clazz.declaredFields) {
                     if (f.name != "j" && f.name != "l") continue
                     f.isAccessible = true
                     val v = f.get(tag) ?: continue
@@ -412,14 +413,15 @@ object AvatarTimeFeature : Feature {
                         }
                     }
                 }
-                cl = cl.superclass
+                cl = clazz.superclass
             }
         }
         // 深度 dump: chatHolder 与 chattingItem 实例的完整字段值(找时间戳)
         runCatching {
             var cl: Class<*>? = tag.javaClass
             while (cl != null && cl != Any::class.java) {
-                for (f in cl.declaredFields) {
+                val clazz = cl
+                for (f in clazz.declaredFields) {
                     if (f.name != "chatHolder" && f.name != "chattingItem" && f.name != "quoteView") continue
                     f.isAccessible = true
                     val v = f.get(tag) ?: continue
@@ -446,7 +448,7 @@ object AvatarTimeFeature : Feature {
                         c3 = c3.superclass
                     }
                 }
-                cl = cl.superclass
+                cl = clazz.superclass
             }
         }
         return sb.toString()
