@@ -18,7 +18,7 @@ object DexScanService {
 
     /** 全部搜索项（与各 Feature 使用的查询一致）。多组候选依次尝试。 */
     fun allItems(): List<Item> = listOf(
-        Item("消息绑定方法(onBindView)", true, arrayOf("[onBindView]")),
+        Item("消息绑定方法(onBindView)", true, arrayOf("MicroMsg.MvvmChattingItem", "[onBindView]")),
         Item("聊天数据适配器", false, arrayOf("MicroMsg.ChattingDataAdapterV3")),
         Item("圆形头像-加载方法", true, arrayOf("MicroMsg.AvatarDrawable")),
         Item("防撤回-解析方法", true, arrayOf("MicroMsg.SDK.XmlParser", "[ %s ]")),

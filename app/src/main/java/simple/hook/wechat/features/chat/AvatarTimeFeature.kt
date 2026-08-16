@@ -59,7 +59,7 @@ object AvatarTimeFeature : Feature {
         val methods = runCatching {
             finder.findMethodsByStrings(
                 classLoader,
-                strings = arrayOf("[onBindView]")
+                strings = arrayOf("MicroMsg.MvvmChattingItem", "[onBindView]")
             )
         }.getOrDefault(emptyList())
         if (methods.isEmpty()) {
@@ -280,6 +280,21 @@ object AvatarTimeFeature : Feature {
 
     private fun handleOnBindView(param: XC_MethodHook.MethodHookParam, classLoader: ClassLoader) {
         val holder = param.args.getOrNull(0) ?: return
+        if (diagCount.getAndIncrement() < 6) {
+            val sb = StringBuilder("onBindView: args=")
+            param.args.forEachIndexed { idx, a ->
+                val d = when (a) {
+                    null -> "null"
+                    is String -> "Str(${a.take(10)})"
+                    is Number -> "${a.javaClass.simpleName}($a)"
+                    is View -> "V:${a.javaClass.simpleName}"
+                    else -> a.javaClass.name.substringAfterLast('.')
+                }
+                sb.append("[$idx]$d | ")
+            }
+            sb.append("this=").append(param.thisObject?.javaClass?.name)
+            Logger.i("[$name] [DIAG] $sb")
+        }
 
         // 1) 从 thisObject 找 ChattingDataAdapter，getItem(msgId) 拿 MsgInfo
         val adapterCls = runCatching {
