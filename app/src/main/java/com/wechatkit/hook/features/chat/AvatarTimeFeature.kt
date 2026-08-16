@@ -94,7 +94,10 @@ object AvatarTimeFeature : Feature {
                         } else ""
                         if (diagCount.getAndIncrement() < 12) {
                             Logger.i("[$name] [DIAG] 时间文本='$timeText'")
-                            if (diagCount.get() < 4) Logger.i("[$name] [DIAG] holder 详情: ${dumpHolder(tag)}")
+                            if (diagCount.get() < 4) {
+                                Logger.i("[$name] [DIAG] holder 详情: ${dumpHolder(tag)}")
+                                Logger.i("[$name] [DIAG] g0 控制器详情: ${dumpController(param.thisObject)}")
+                            }
                         }
 
                         if (mode() == "avatar") {
@@ -258,6 +261,40 @@ object AvatarTimeFeature : Feature {
                 walkViews(root.getChildAt(i), visitor)
             }
         }
+    }
+
+    /** dump g0 消息项控制器实例：找 MsgInfo(dm.*) 引用。 */
+    private fun dumpController(g0: Any): String {
+        val sb = StringBuilder(g0.javaClass.name)
+        try {
+            var clazz: Class<*>? = g0.javaClass
+            var count = 0
+            while (clazz != null && clazz != Any::class.java && count < 60) {
+                for (f in clazz.declaredFields) {
+                    if (++count > 60) break
+                    if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                    try {
+                        f.isAccessible = true
+                        val v = f.get(g0)
+                        val desc = when (v) {
+                            null -> "null"
+                            is String -> "Str(${v.take(8)})"
+                            is Number -> "${v.javaClass.simpleName}($v)"
+                            is View -> "V:${v.javaClass.simpleName}"
+                            else -> v.javaClass.name.substringAfterLast('.')
+                        }
+                        sb.append(f.name).append(":").append(f.type.simpleName).append("=").append(desc)
+                        if (v != null && v !is String && v !is Number && v !is View) {
+                            val ct = readCreateTimeSec(v)
+                            if (ct > 0) sb.append("[createTime=").append(ct).append("]")
+                        }
+                        sb.append(" | ")
+                    } catch (_: Throwable) {}
+                }
+                clazz = clazz.superclass
+            }
+        } catch (_: Throwable) {}
+        return sb.toString()
     }
 
     /** dump holder 所有字段类型和值摘要，并尝试对每个对象字段读 field_createTime。 */
