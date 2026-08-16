@@ -512,25 +512,31 @@ object AvatarTimeFeature : Feature {
         tv.visibility = View.VISIBLE
     }
 
-    /** 把头像包进垂直容器(头像+时间)。 */
+    /** 把头像(或其 MaskLayout 遮罩容器)包进垂直容器(头像+时间)。
+     * 头像通常包在 MaskLayout(圆形遮罩)里——包装 MaskLayout 而非头像本身,避免破坏圆形。 */
     private fun injectTimeBelowAvatar(avatar: View): TextView? {
-        val parent = avatar.parent as? ViewGroup ?: return null
-        val idx = parent.indexOfChild(avatar)
+        // 若父容器是 MaskLayout,包装父容器;否则包装头像
+        val maskParent = avatar.parent
+        val target = if (maskParent != null &&
+            maskParent.javaClass.name.contains("MaskLayout")
+        ) maskParent as? ViewGroup else avatar
+        val parent = target?.parent as? ViewGroup ?: return null
+        val idx = parent.indexOfChild(target)
         if (idx < 0) return null
-        val lp = avatar.layoutParams
-        val avatarId = avatar.id
+        val lp = target.layoutParams
+        val targetId = target.id
         val w = if (lp != null && lp.width > 0) lp.width else ViewGroup.LayoutParams.WRAP_CONTENT
         val h = if (lp != null && lp.height > 0) lp.height else ViewGroup.LayoutParams.WRAP_CONTENT
 
-        parent.removeView(avatar)
-        val wrapper = LinearLayout(avatar.context).apply {
+        parent.removeView(target)
+        val wrapper = LinearLayout(target.context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            if (avatarId != View.NO_ID) id = avatarId
+            if (targetId != View.NO_ID) id = targetId
         }
-        wrapper.addView(avatar, LinearLayout.LayoutParams(w, h))
+        wrapper.addView(target, LinearLayout.LayoutParams(w, h))
 
-        val tv = TextView(avatar.context).apply {
+        val tv = TextView(target.context).apply {
             text = ""
             textSize = 10f
             setTextColor(0xFF8A8A8A.toInt())
