@@ -166,6 +166,41 @@ object RoundAvatarFeature : Feature {
             Logger.i("[$name] ChattingAvatarImageView 构造 + setImageDrawable 兜底已挂载")
         }.onFailure { Logger.e("[$name] 头像 View 构造 hook 失败: $it") }
 
+        // ---- 0.2 头像 Drawable tn1.e：微信头像圆角的真正控制点（参考 WeKit RoundAvatars） ----
+        // 8.0.76: 类 tn1.e 构造 <init>(LifecycleScope, String, F, Z, String, I, i) float 在 args[2]；
+        //         方法 c(tn1/e, LifecycleScope, String, F, Z, String, I, Object) float 在 args[3]。
+        // 微信用它渲染所有头像的圆角，改这个参数 = 全局圆角生效。
+        runCatching {
+            val tn1e = XposedHelpers.findClass("tn1.e", classLoader)
+
+            XposedBridge.hookAllConstructors(tn1e, object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        if (param.args.size > 2 && param.args[2] is Float) {
+                            param.args[2] = radius
+                            if (ctorDiagCount.getAndIncrement() < 30) {
+                                Logger.i("[$name] [DIAG] tn1.e 构造圆角参数改为 $radius")
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                }
+            })
+
+            XposedBridge.hookAllMethods(tn1e, "c", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        if (param.args.size > 3 && param.args[3] is Float) {
+                            param.args[3] = radius
+                            if (ctorDiagCount.getAndIncrement() < 30) {
+                                Logger.i("[$name] [DIAG] tn1.e.c 圆角参数改为 $radius")
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                }
+            })
+            Logger.i("[$name] tn1.e 圆角参数 hook 已挂载（参考 WeKit 方案）")
+        }.onFailure { Logger.e("[$name] tn1.e hook 失败: $it") }
+
         // ---- 1. 消息头像 drawable：ta5.d（包 ta5 下的独立类 d，非内部类） ----
         runCatching {
             val ta5d = XposedHelpers.findClass("ta5.d", classLoader)
@@ -234,7 +269,6 @@ object RoundAvatarFeature : Feature {
         // ---- 1. 头像 Drawable 类 x：构造 + 绘制强制圆角（会话列表等场景） ----
         runCatching {
             val xCls = XposedHelpers.findClass("com.tencent.mm.pluginsdk.ui.x", classLoader)
-
             XposedBridge.hookAllConstructors(xCls, object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
