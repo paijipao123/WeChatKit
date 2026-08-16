@@ -63,6 +63,9 @@ object AvatarTimeFeature : Feature {
             Logger.e("[$name] 未找到 onBindView 方法")
             return
         }
+        if (methods.isEmpty()) {
+            Logger.e("[$name] 未找到 onBindView 方法(字符串定位失败), 走类名 fallback")
+        }
         methods.take(3).forEach { method ->
             runCatching {
                 XposedBridge.hookMethod(method, object : XC_MethodHook() {
@@ -76,6 +79,32 @@ object AvatarTimeFeature : Feature {
                 })
                 Logger.i("[$name] 已 Hook onBindView: ${method.declaringClass.name}#${method.name}")
             }.onFailure { Logger.e("[$name] onBindView Hook 失败: $it") }
+        }
+
+        // fallback: 类名+onBindView（与 HideAvatarFeature 同款）
+        if (methods.isEmpty()) {
+            val clsNames = runCatching {
+                finder.findClassNamesByStrings("MicroMsg.MvvmChattingItem", "[onBindView]")
+            }.getOrDefault(emptyList())
+            val target = clsNames.firstOrNull()
+                ?: runCatching { finder.findClassNamesByStrings("MvvmChattingItem", "onBindView").firstOrNull() }.getOrNull()
+            if (target != null) {
+                runCatching {
+                    val clazz = classLoader.loadClass(target)
+                    XposedBridge.hookAllMethods(clazz, "onBindView", object : XC_MethodHook() {
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            try {
+                                handleOnBindView(param, classLoader)
+                            } catch (t: Throwable) {
+                                if (diagCount.getAndIncrement() < 8) Logger.e("[$name] onBindView 处理异常: $t")
+                            }
+                        }
+                    })
+                    Logger.i("[$name] 已 Hook $target#onBindView (fallback)")
+                }.onFailure { Logger.e("[$name] fallback Hook $target 失败: $it") }
+            } else {
+                Logger.e("[$name] fallback 也未找到 onBindView 类")
+            }
         }
     }
 

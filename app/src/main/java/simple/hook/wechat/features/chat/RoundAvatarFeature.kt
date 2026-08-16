@@ -206,9 +206,17 @@ object RoundAvatarFeature : Feature {
             val ta5d = XposedHelpers.findClass("ta5.d", classLoader)
             XposedBridge.hookAllConstructors(ta5d, object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    if (ctorDiagCount.getAndIncrement() < 10) {
+                    if (ctorDiagCount.getAndIncrement() < 12) {
                         val intArg = param.args.getOrNull(1)
-                        Logger.i("[$name] [DIAG] ta5.d 构造: args=${param.args.size}, intArg=$intArg, cls=${param.thisObject.javaClass.name}")
+                        // intArg 是资源 ID(0x7F0B...)，打印对应资源名定位遮罩形状
+                        var resName = ""
+                        if (intArg is Int) {
+                            resName = runCatching {
+                                val app = android.app.ActivityThread.currentApplication()
+                                app?.resources?.getResourceName(intArg) ?: ""
+                            }.getOrDefault("")
+                        }
+                        Logger.i("[$name] [DIAG] ta5.d 构造: intArg=$intArg res=$resName cls=${param.thisObject.javaClass.name}")
                     }
                 }
             })
