@@ -115,10 +115,11 @@ object AvatarTimeFeature : Feature {
                             }
                             if (tv == null && itemRoot != null) {
                                 ensureTimeWrapper(avatar)
-                                tv = avatarTimeViews[avatar] ?: return
+                                tv = avatarTimeViews[avatar]
                             }
-                            tv.text = timeText
-                            tv.visibility = if (timeText.isEmpty()) View.GONE else View.VISIBLE
+                            val t = tv ?: return
+                            t.text = timeText
+                            t.visibility = if (timeText.isEmpty()) View.GONE else View.VISIBLE
                         } else {
                             // 同理：tv 不在视图树则重新注入气泡容器
                             var tv = msgTimeViews[avatar]
@@ -128,11 +129,12 @@ object AvatarTimeFeature : Feature {
                             }
                             if (tv == null && itemRoot != null) {
                                 ensureMessageTimeView(itemRoot, avatar)
-                                tv = msgTimeViews[avatar] ?: return
+                                tv = msgTimeViews[avatar]
                             }
-                            tv.text = timeText
-                            tv.visibility = if (timeText.isEmpty()) View.GONE else View.VISIBLE
-                            tv.gravity = if (isLeftAvatar(avatar)) Gravity.START else Gravity.END
+                            val t = tv ?: return
+                            t.text = timeText
+                            t.visibility = if (timeText.isEmpty()) View.GONE else View.VISIBLE
+                            t.gravity = if (isLeftAvatar(avatar)) Gravity.START else Gravity.END
                         }
                     } catch (e: Throwable) {
                         if (diagCount.getAndIncrement() < 8) Logger.e("[$name] [DIAG] setChattingItem 异常: $e")
