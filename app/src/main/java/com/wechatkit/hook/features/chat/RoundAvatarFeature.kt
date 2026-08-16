@@ -45,6 +45,15 @@ object RoundAvatarFeature : Feature {
     /** draw 诊断计数。 */
     private val drawDiagCount = java.util.concurrent.atomic.AtomicInteger(0)
 
+    /** ta5.d 构造诊断计数。 */
+    private val ctorDiagCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** MaskLayout 遮罩诊断计数。 */
+    private val maskDiagCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** x.draw 诊断计数。 */
+    private val xDrawDiagCount = java.util.concurrent.atomic.AtomicInteger(0)
+
     /** 我们自己 save 过的 Canvas -> saveCount（before/after 配对 restoreToCount）。 */
     private val canvasSaves =
         java.util.Collections.synchronizedMap(java.util.IdentityHashMap<Canvas, Int>())
@@ -54,13 +63,39 @@ object RoundAvatarFeature : Feature {
         Logger.i("[$name] 开始 Hook (radius=$radius)")
         if (finder == null) return
 
-        // ---- 0. 消息头像 drawable：ta5.d（包 ta5 下的独立类 d，非内部类） ----
+        // ---- 0. 头像 View 圆形裁剪兜底（OutlineProvider + clipToOutline，硬件加速下可靠） ----
+        runCatching {
+            val avatarCls = XposedHelpers.findClass(
+                "com.tencent.mm.ui.chatting.view.ChattingAvatarImageView", classLoader)
+            XposedBridge.hookAllConstructors(avatarCls, object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val v = param.thisObject as? android.view.View ?: return
+                        // 圆形 outline：半径 = 短边一半
+                        v.outlineProvider = object : android.view.ViewOutlineProvider() {
+                            override fun getOutline(view: android.view.View, outline: android.graphics.Outline) {
+                                val r = min(view.width, view.height) / 2f
+                                outline.setOval(0, 0, view.width, view.height)
+                            }
+                        }
+                        v.clipToOutline = true
+                        // 尺寸变化时刷新 outline
+                        v.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> v.invalidateOutline() }
+                        if (ctorDiagCount.getAndIncrement() < 10) {
+                            Logger.i("[$name] [DIAG] ChattingAvatarImageView 圆形 clipToOutline 已设置")
+                        }
+                    } catch (_: Throwable) {}
+                }
+            })
+            Logger.i("[$name] ChattingAvatarImageView 圆形裁剪兜底已挂载")
+        }.onFailure { Logger.e("[$name] 头像 View outline hook 失败: $it") }
+
+        // ---- 1. 消息头像 drawable：ta5.d（包 ta5 下的独立类 d，非内部类） ----
         runCatching {
             val ta5d = XposedHelpers.findClass("ta5.d", classLoader)
-
             XposedBridge.hookAllConstructors(ta5d, object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    if (drawDiagCount.getAndIncrement() < 10) {
+                    if (ctorDiagCount.getAndIncrement() < 10) {
                         val intArg = param.args.getOrNull(1)
                         Logger.i("[$name] [DIAG] ta5.d 构造: args=${param.args.size}, intArg=$intArg, cls=${param.thisObject.javaClass.name}")
                     }
@@ -81,7 +116,7 @@ object RoundAvatarFeature : Feature {
                         val sc = canvas.save()
                         runCatching { canvas.clipPath(path) }
                         canvasSaves[canvas] = sc
-                        if (drawDiagCount.getAndIncrement() < 10) {
+                        if (drawDiagCount.getAndIncrement() < 20) {
                             Logger.i("[$name] [DIAG] ta5.d.draw 裁剪 半径=$r bounds=${b.width()}x${b.height()} hw=${canvas.isHardwareAccelerated}")
                         }
                     } catch (_: Throwable) {}
@@ -103,7 +138,7 @@ object RoundAvatarFeature : Feature {
             val maskLayout = XposedHelpers.findClass("com.tencent.mm.ui.base.MaskLayout", classLoader)
             XposedBridge.hookAllMethods(maskLayout, "setMaskBitmap", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    if (drawDiagCount.getAndIncrement() < 10) {
+                    if (maskDiagCount.getAndIncrement() < 10) {
                         val bmp = param.args.getOrNull(0) as? Bitmap
                         Logger.i("[$name] [DIAG] MaskLayout.setMaskBitmap: ${bmp?.width}x${bmp?.height}")
                     }
@@ -111,7 +146,7 @@ object RoundAvatarFeature : Feature {
             })
             XposedBridge.hookAllMethods(maskLayout, "setMaskDrawable", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    if (drawDiagCount.getAndIncrement() < 10) {
+                    if (maskDiagCount.getAndIncrement() < 10) {
                         val d = param.args.getOrNull(0) as? Drawable
                         Logger.i("[$name] [DIAG] MaskLayout.setMaskDrawable: ${d?.javaClass?.name}")
                     }
@@ -137,7 +172,7 @@ object RoundAvatarFeature : Feature {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     try {
                         XposedHelpers.setFloatField(param.thisObject, "s", radius)
-                        if (drawDiagCount.getAndIncrement() < 10) {
+                        if (xDrawDiagCount.getAndIncrement() < 10) {
                             val s = XposedHelpers.getFloatField(param.thisObject, "s")
                             Logger.i("[$name] [DIAG] x.draw 触发, s=$s")
                         }
