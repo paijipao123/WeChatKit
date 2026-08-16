@@ -285,6 +285,33 @@ object AvatarTimeFeature : Feature {
                 clazz = clazz.superclass
             }
         } catch (_: Throwable) {}
+        // chattingItem 实例的完整类名 + 字段（找 createTime 引用）
+        runCatching {
+            val f = tag.javaClass.getDeclaredField("chattingItem")
+            f.isAccessible = true
+            val ci = f.get(tag) ?: return sb.toString()
+            sb.append("\nchattingItem 实例: ${ci.javaClass.name} 字段: ")
+            var c2: Class<*>? = ci.javaClass
+            var n = 0
+            while (c2 != null && c2 != Any::class.java && n < 40) {
+                for (f2 in c2.declaredFields) {
+                    if (++n > 40) break
+                    if (java.lang.reflect.Modifier.isStatic(f2.modifiers)) continue
+                    try {
+                        f2.isAccessible = true
+                        val v2 = f2.get(ci)
+                        val d2 = when (v2) {
+                            null -> "null"
+                            is String -> "Str(${v2.take(8)})"
+                            is Number -> "${v2.javaClass.simpleName}($v2)"
+                            else -> v2.javaClass.name.substringAfterLast('.')
+                        }
+                        sb.append(f2.name).append(":").append(f2.type.simpleName).append("=").append(d2).append(" | ")
+                    } catch (_: Throwable) {}
+                }
+                c2 = c2.superclass
+            }
+        }
         return sb.toString()
     }
 
