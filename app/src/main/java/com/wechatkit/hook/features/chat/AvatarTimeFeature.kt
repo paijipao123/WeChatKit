@@ -292,6 +292,26 @@ object AvatarTimeFeature : Feature {
                 clazz = clazz.superclass
             }
         } catch (_: Throwable) {}
+        // dump holder 所有无参方法(含父类)的返回值类名(找 getMsgInfo 类方法)
+        runCatching {
+            sb.append("\n[methods] ")
+            var cm: Class<*>? = tag.javaClass
+            var nm = 0
+            while (cm != null && cm != Any::class.java && nm < 60) {
+                for (fm in cm.declaredMethods) {
+                    if (++nm > 60) break
+                    if (java.lang.reflect.Modifier.isStatic(fm.modifiers)) continue
+                    if (fm.parameterCount != 0) continue
+                    try {
+                        fm.isAccessible = true
+                        val rv = fm.invoke(tag)
+                        val rd = rv?.javaClass?.name?.substringAfterLast('.') ?: "null"
+                        sb.append(fm.name).append("->").append(rd).append(" | ")
+                    } catch (_: Throwable) {}
+                }
+                cm = cm.superclass
+            }
+        }
         // 深度 dump: chatHolder 与 chattingItem 实例的完整字段值(找时间戳)
         runCatching {
             var cl: Class<*>? = tag.javaClass
