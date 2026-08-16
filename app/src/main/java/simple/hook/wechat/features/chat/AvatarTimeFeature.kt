@@ -310,14 +310,37 @@ object AvatarTimeFeature : Feature {
         if (createTimeSec <= 0) {
             val adapter = findFieldOfAdapterLike(param.thisObject)
             if (adapter != null) {
-                val msgInfo = runCatching {
+                // 8.0.76: adapter.k 有 getItem(I)/K0(J)/J0(I) 拿 MsgInfo(storage.e9)
+                var msgInfo: Any? = null
+                // K0(msgId long)
+                msgInfo = runCatching {
                     val m = adapter.javaClass.methods.firstOrNull {
-                        it.name == "getItem" && it.parameterTypes.size == 1
+                        it.name == "K0" && it.parameterTypes.size == 1 &&
+                            it.parameterTypes[0] == java.lang.Long.TYPE
                     }
-                    m?.invoke(adapter, msgId)
+                    m?.invoke(adapter, msgId.toLong())
                 }.getOrNull()
+                // J0(msgId int)
+                if (msgInfo == null) {
+                    msgInfo = runCatching {
+                        val m = adapter.javaClass.methods.firstOrNull {
+                            it.name == "J0" && it.parameterTypes.size == 1 &&
+                                it.parameterTypes[0] == java.lang.Integer.TYPE
+                        }
+                        m?.invoke(adapter, msgId)
+                    }.getOrNull()
+                }
+                // getItem(int)
+                if (msgInfo == null) {
+                    msgInfo = runCatching {
+                        val m = adapter.javaClass.methods.firstOrNull {
+                            it.name == "getItem" && it.parameterTypes.size == 1
+                        }
+                        m?.invoke(adapter, msgId)
+                    }.getOrNull()
+                }
                 createTimeSec = msgInfo?.let { readCreateTimeSec(it) } ?: 0L
-                if (diagCount.get() < 8) Logger.i("[$name] [DIAG] adapter=${adapter.javaClass.name} getItem($msgId) -> ${msgInfo?.javaClass?.name} ct=$createTimeSec")
+                if (diagCount.get() < 8) Logger.i("[$name] [DIAG] adapter=${adapter.javaClass.name} msgId=$msgId -> ${msgInfo?.javaClass?.name} ct=$createTimeSec")
             }
         }
         // C) 对象图递归(thisObject + args)
