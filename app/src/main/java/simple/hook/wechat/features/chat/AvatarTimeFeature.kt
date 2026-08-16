@@ -84,9 +84,13 @@ object AvatarTimeFeature : Feature {
         // g0.setChattingItem 主路径(8.0.76 实际绑定入口)
         hookG0(classLoader)
 
-        // ChattingDataAdapter.getItem -> position/time 映射
-        runCatching {
-            val adapterCls = classLoader.loadClass("com.tencent.mm.ui.chatting.adapter.ChattingDataAdapter")
+        // ChattingDataAdapter.getItem -> msgId/time 映射(DexKit 动态定位类名)
+        val adapterClsName = runCatching {
+            finder.findClassNameByStrings("MicroMsg.ChattingDataAdapterV3")
+        }.getOrNull()
+        Logger.i("[$name] ChattingDataAdapter 类: $adapterClsName")
+        if (adapterClsName != null) runCatching {
+            val adapterCls = XposedHelpers.findClass(adapterClsName, classLoader)
             XposedBridge.hookAllMethods(adapterCls, "getItem", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
@@ -154,8 +158,8 @@ object AvatarTimeFeature : Feature {
         val g0 = param.thisObject ?: return
         val holderView = findFieldByNameInHierarchy(g0, "convertView") as? View ?: return
 
-        // 参数 dump(找 MsgInfo 入口)
-        if (diagCount.get() < 3) {
+        // 参数 dump(找 MsgInfo 入口 + 完整字段)
+        if (diagCount.get() < 4) {
             val sb = StringBuilder("setChattingItem 参数: ")
             param.args.forEachIndexed { idx, a ->
                 val d = when (a) {
@@ -169,6 +173,27 @@ object AvatarTimeFeature : Feature {
                 if (a != null && a !is String && a !is Number && a !is View) {
                     val ct = readCreateTimeSec(a)
                     if (ct > 0) sb.append("[ct=$ct]")
+                    // 全层级字段:找 msgId
+                    var c: Class<*>? = a.javaClass
+                    var n = 0
+                    while (c != null && c != Any::class.java && n < 60) {
+                        for (f in c.declaredFields) {
+                            if (++n > 60) break
+                            if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                            try {
+                                f.isAccessible = true
+                                val v = f.get(a)
+                                val dv = when (v) {
+                                    null -> "null"
+                                    is String -> "Str(${v.take(10)})"
+                                    is Number -> "${v.javaClass.simpleName}($v)"
+                                    else -> v.javaClass.simpleName
+                                }
+                                sb.append(f.name).append(":").append(f.type.simpleName).append("=").append(dv).append(" | ")
+                            } catch (_: Throwable) {}
+                        }
+                        c = c.superclass
+                    }
                 }
             }
             Logger.i("[$name] [DIAG] $sb")
