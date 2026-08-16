@@ -46,6 +46,10 @@ object AvatarTimeFeature : Feature {
 
     private val diagCount = java.util.concurrent.atomic.AtomicInteger(0)
 
+    /** g0(holder) -> createTime(ms) 缓存：同一绑定对象不重复递归反射。 */
+    private val timeCache =
+        java.util.Collections.synchronizedMap(java.util.WeakHashMap<Any, Long>())
+
     override fun hook(classLoader: ClassLoader, finder: DexKitFinder?) {
         if (!Prefs.getBoolean("feat_avatar_time", false)) return
         Logger.i("[$name] 开始 Hook (mode=${mode()})")
@@ -86,8 +90,12 @@ object AvatarTimeFeature : Feature {
                         }.getOrNull()
                         var timeText = itemRoot?.let { getTimeText(it) } ?: ""
                         if (timeText.isEmpty()) {
-                            // timeTV 大多为空：从 g0 的消息数据递归找 createTime（秒级时间戳）并格式化
-                            val ts = findCreateTimeMs(param.thisObject, 0, java.util.HashSet())
+                            // timeTV 大多为空：从 g0 的消息数据递归找 createTime（秒/毫秒时间戳）并格式化
+                            var ts = timeCache[param.thisObject] ?: 0
+                            if (ts == 0L) {
+                                ts = findCreateTimeMs(param.thisObject, 0, java.util.HashSet())
+                                if (ts > 0) timeCache[param.thisObject] = ts
+                            }
                             if (ts > 0) {
                                 timeText = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
                                     .format(java.util.Date(ts))

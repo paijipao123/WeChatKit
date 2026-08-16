@@ -44,7 +44,7 @@ object RoundAvatarFeature : Feature {
     /** draw 诊断计数。 */
     private val drawDiagCount = java.util.concurrent.atomic.AtomicInteger(0)
 
-    /** 我们自己 save 过的 Canvas -> 层数（before/after 配对 restore）。 */
+    /** 我们自己 save 过的 Canvas -> saveCount（before/after 配对 restoreToCount）。 */
     private val canvasSaves =
         java.util.Collections.synchronizedMap(java.util.IdentityHashMap<Canvas, Int>())
 
@@ -77,9 +77,9 @@ object RoundAvatarFeature : Feature {
                         val path = Path().apply {
                             addCircle(b.exactCenterX(), b.exactCenterY(), r, Path.Direction.CCW)
                         }
-                        canvas.save()
+                        val sc = canvas.save()
                         runCatching { canvas.clipPath(path) }
-                        canvasSaves[canvas] = (canvasSaves[canvas] ?: 0) + 1
+                        canvasSaves[canvas] = sc
                         if (drawDiagCount.getAndIncrement() < 10) {
                             Logger.i("[$name] [DIAG] ta5\$d.draw 裁剪 半径=$r bounds=${b.width()}x${b.height()} hw=${canvas.isHardwareAccelerated}")
                         }
@@ -89,8 +89,8 @@ object RoundAvatarFeature : Feature {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
                         val canvas = param.args.getOrNull(0) as? Canvas ?: return
-                        val n = canvasSaves.remove(canvas) ?: return
-                        repeat(n) { runCatching { canvas.restore() } }
+                        val sc = canvasSaves.remove(canvas) ?: return
+                        runCatching { canvas.restoreToCount(sc) }
                     } catch (_: Throwable) {}
                 }
             })
