@@ -58,17 +58,37 @@ object RoundAvatarFeature : Feature {
     private val canvasSaves =
         java.util.Collections.synchronizedMap(java.util.IdentityHashMap<Canvas, Int>())
 
-    /** 给头像 View 设置圆形 outline + clipToOutline（View 级圆形裁剪，硬件加速下可靠）。 */
+    /** 给头像 View 设置圆形 outline + clipToOutline（View 级圆形裁剪，硬件加速下可靠）。
+     * 用 tag 标记我们已设置过，避免重复；微信若重置 outline，tag 一并被清则重新设置。 */
     private fun applyRoundOutline(v: android.view.View) {
-        if (v.clipToOutline && v.outlineProvider != null) return  // 已设置过
-        v.outlineProvider = object : android.view.ViewOutlineProvider() {
-            override fun getOutline(view: android.view.View, outline: android.graphics.Outline) {
-                if (view.width <= 0 || view.height <= 0) return
-                val r = min(view.width, view.height) / 2f
-                outline.setOval(0, 0, view.width, view.height)
+        val ourTag = 0x7F0D0001
+        if (v.getTag(ourTag) == true) return
+        try {
+            v.outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: android.view.View, outline: android.graphics.Outline) {
+                    if (view.width <= 0 || view.height <= 0) return
+                    outline.setOval(0, 0, view.width, view.height)
+                }
+            }
+            v.clipToOutline = true
+            v.setTag(ourTag, true)
+            // 尺寸变化时刷新 outline
+            v.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                if (v.width > 0 && v.height > 0) v.invalidateOutline()
+            }
+        } catch (_: Throwable) {}
+    }
+
+    /** 在视图树中查找 ChattingAvatarImageView 实例。 */
+    private fun findAvatarIn(root: android.view.View): android.view.View? {
+        if (root.javaClass.name == "com.tencent.mm.ui.chatting.view.ChattingAvatarImageView") return root
+        if (root is android.view.ViewGroup) {
+            for (i in 0 until root.childCount) {
+                val found = findAvatarIn(root.getChildAt(i))
+                if (found != null) return found
             }
         }
-        v.clipToOutline = true
+        return null
     }
 
     override fun hook(classLoader: ClassLoader, finder: DexKitFinder?) {
@@ -76,10 +96,42 @@ object RoundAvatarFeature : Feature {
         Logger.i("[$name] 开始 Hook (radius=$radius)")
         if (finder == null) return
 
-        // ---- 0. 头像 View 圆形裁剪兜底（OutlineProvider + clipToOutline，硬件加速下可靠） ----
-        // 注意：ta5.d.draw 里的 canvas.clipPath 圆形在硬件加速 Canvas 上无效，
-        // View 级 clipToOutline 才是可靠方案。构造时尺寸未定 + 微信可能覆盖 outline，
-        // 因此在每次 setImageDrawable（设置头像图片）后强制重新设置圆形 outline。
+        // ---- 0. 头像 View 圆形裁剪（g0.create/setChattingItem 拿头像实例直接设置，
+        // 绕开构造 hook 不触发的问题；outline + clipToOutline 硬件加速下可靠） ----
+        runCatching {
+            val g0 = XposedHelpers.findClass("com.tencent.mm.ui.chatting.viewitems.g0", classLoader)
+
+            XposedBridge.hookAllMethods(g0, "create", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val root = param.args.getOrNull(0) as? android.view.View ?: return
+                        val avatar = findAvatarIn(root) ?: return
+                        applyRoundOutline(avatar)
+                        if (ctorDiagCount.getAndIncrement() < 10) {
+                            Logger.i("[$name] [DIAG] create 中设置圆形 outline w=${avatar.width} h=${avatar.height}")
+                        }
+                    } catch (_: Throwable) {}
+                }
+            })
+
+            XposedBridge.hookAllMethods(g0, "setChattingItem", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        val avatar = runCatching {
+                            XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? android.view.View
+                        }.getOrNull() ?: return
+                        applyRoundOutline(avatar)
+                        if (ctorDiagCount.getAndIncrement() < 20) {
+                            Logger.i("[$name] [DIAG] setChattingItem 后强制圆形 outline w=${avatar.width} h=${avatar.height}")
+                        }
+                    } catch (_: Throwable) {}
+                }
+            })
+
+            Logger.i("[$name] g0.create/setChattingItem 圆形 outline 已挂载")
+        }.onFailure { Logger.e("[$name] g0 圆形 outline hook 失败: $it") }
+
+        // ---- 0.5 头像 View 构造 + setImageDrawable 双保险（若走得到） ----
         runCatching {
             val avatarCls = XposedHelpers.findClass(
                 "com.tencent.mm.ui.chatting.view.ChattingAvatarImageView", classLoader)
@@ -91,7 +143,7 @@ object RoundAvatarFeature : Feature {
                         v.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
                             applyRoundOutline(v)
                         }
-                        if (ctorDiagCount.getAndIncrement() < 10) {
+                        if (ctorDiagCount.getAndIncrement() < 20) {
                             Logger.i("[$name] [DIAG] ChattingAvatarImageView 构造: 圆形 outline 已设置")
                         }
                     } catch (_: Throwable) {}
@@ -104,15 +156,15 @@ object RoundAvatarFeature : Feature {
                     try {
                         val v = param.thisObject as? android.view.View ?: return
                         applyRoundOutline(v)
-                        if (ctorDiagCount.getAndIncrement() < 20) {
+                        if (ctorDiagCount.getAndIncrement() < 30) {
                             Logger.i("[$name] [DIAG] setImageDrawable 后强制圆形 outline w=${v.width} h=${v.height}")
                         }
                     } catch (_: Throwable) {}
                 }
             })
 
-            Logger.i("[$name] ChattingAvatarImageView 圆形裁剪兜底已挂载（构造 + setImageDrawable）")
-        }.onFailure { Logger.e("[$name] 头像 View outline hook 失败: $it") }
+            Logger.i("[$name] ChattingAvatarImageView 构造 + setImageDrawable 兜底已挂载")
+        }.onFailure { Logger.e("[$name] 头像 View 构造 hook 失败: $it") }
 
         // ---- 1. 消息头像 drawable：ta5.d（包 ta5 下的独立类 d，非内部类） ----
         runCatching {

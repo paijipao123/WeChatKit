@@ -180,15 +180,30 @@ object AvatarTimeFeature : Feature {
 
     // ============ 模式 2：消息下方 ============
 
-    /** 在气泡容器末尾注入时间 TextView（气泡下方）。 */
+    /** 在气泡容器下方注入时间 TextView。优先注入到气泡容器的父容器（垂直 LinearLayout
+     * 时排在气泡之后）；父容器不合适则回退注入气泡容器末尾。 */
     private fun ensureMessageTimeView(itemRoot: View, avatar: View) {
         if (msgTimeViews.containsKey(avatar)) return
         val bubble = findBubbleContainer(itemRoot, avatar) ?: return
         val tv = createTimeTextView(avatar)
+        val lp = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         runCatching {
-            bubble.addView(tv, ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            val parent = bubble.parent as? ViewGroup
+            val injected = if (parent is LinearLayout && parent.orientation == LinearLayout.VERTICAL) {
+                // 垂直容器：插到气泡之后 = 气泡正下方
+                val idx = parent.indexOfChild(bubble)
+                parent.addView(tv, idx + 1, lp)
+                true
+            } else {
+                bubble.addView(tv, lp)
+                false
+            }
             msgTimeViews[avatar] = tv
+            if (diagCount.getAndIncrement() < 8) {
+                val target = tv.parent?.javaClass?.name ?: "null"
+                Logger.i("[$name] [DIAG] 注入消息时间: 气泡=${bubble.javaClass.name} 注入位置=${if (injected) "气泡下方" else "气泡内"} 父=$target")
+            }
         }.onFailure { }
     }
 
@@ -200,6 +215,15 @@ object AvatarTimeFeature : Feature {
             val child = root.getChildAt(i) as? ViewGroup ?: continue
             if (containsView(child, avatar)) continue  // 头像容器跳过
             if (candidate == null || child.width > candidate.width) candidate = child
+        }
+        // create 时布局未完成，child.width 可能全是 0：退化为"第一个不含头像的 ViewGroup"
+        if (candidate == null) {
+            for (i in 0 until root.childCount) {
+                val child = root.getChildAt(i) as? ViewGroup ?: continue
+                if (containsView(child, avatar)) continue
+                candidate = child
+                break
+            }
         }
         return candidate
     }
