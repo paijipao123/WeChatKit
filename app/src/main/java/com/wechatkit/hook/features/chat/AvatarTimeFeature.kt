@@ -74,7 +74,7 @@ object AvatarTimeFeature : Feature {
             })
 
             // setChattingItem：每次绑定刷新时间文本（复用场景）。用 g0.avatarIV 字段拿头像，
-            // convertView 拿消息条根取时间（getMainContainerView 返回的是内容子 View，不可用）。
+            // convertView 拿消息条根；时间优先取微信 timeTV，为空时从消息数据递归找 createTime。
             XposedBridge.hookAllMethods(g0, "setChattingItem", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
@@ -84,7 +84,18 @@ object AvatarTimeFeature : Feature {
                         val itemRoot = runCatching {
                             XposedHelpers.getObjectField(param.thisObject, "convertView") as? View
                         }.getOrNull()
-                        val timeText = itemRoot?.let { getTimeText(it) } ?: ""
+                        var timeText = itemRoot?.let { getTimeText(it) } ?: ""
+                        if (timeText.isEmpty()) {
+                            // timeTV 大多为空：从 g0 的消息数据递归找 createTime（秒级时间戳）并格式化
+                            val ts = findCreateTimeMs(param.thisObject, 0, java.util.HashSet())
+                            if (ts > 0) {
+                                timeText = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                                    .format(java.util.Date(ts))
+                            }
+                        }
+                        if (diagCount.getAndIncrement() < 8) {
+                            Logger.i("[$name] [DIAG] 时间文本='$timeText'")
+                        }
 
                         if (mode() == "avatar") {
                             val tv = avatarTimeViews[avatar] ?: return
@@ -95,9 +106,6 @@ object AvatarTimeFeature : Feature {
                             tv.text = timeText
                             tv.visibility = if (timeText.isEmpty()) View.GONE else View.VISIBLE
                             tv.gravity = if (isLeftAvatar(avatar)) Gravity.START else Gravity.END
-                        }
-                        if (diagCount.getAndIncrement() < 8) {
-                            Logger.i("[$name] [DIAG] 时间文本='$timeText'")
                         }
                     } catch (e: Throwable) {
                         if (diagCount.getAndIncrement() < 8) Logger.e("[$name] [DIAG] setChattingItem 异常: $e")
@@ -234,4 +242,53 @@ object AvatarTimeFeature : Feature {
 
     private fun dp2px(ctx: android.content.Context, dp: Int): Int =
         (dp * ctx.resources.displayMetrics.density).toInt()
+
+    /**
+     * 从消息对象递归查找 createTime 时间戳：
+     * - 秒级（约 1.5e9 ~ 2.5e9，当前时间 2026 年 ≈ 1.77e9）→ 乘 1000 转毫秒；
+     * - 毫秒级（约 1.5e12 ~ 2.5e12）→ 直接返回。
+     * 找不到返回 0。限制深度与访问数量防止卡顿。
+     */
+    private fun findCreateTimeMs(obj: Any?, depth: Int, visited: java.util.HashSet<Int>): Long {
+        if (obj == null || depth > 5 || visited.size > 2000) return 0
+        if (obj is String || obj is Number || obj is Boolean || obj is Char ||
+            obj is android.graphics.drawable.Drawable || obj is View || obj is android.app.Activity
+        ) return 0
+        val id = System.identityHashCode(obj)
+        if (!visited.add(id)) return 0
+
+        var clazz: Class<*>? = obj.javaClass
+        var checked = 0
+        while (clazz != null && clazz != Any::class.java && checked < 40) {
+            for (f in clazz.declaredFields) {
+                if (++checked > 600) return 0
+                if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                try {
+                    f.isAccessible = true
+                    val t = f.type
+                    if (t == java.lang.Long::class.javaPrimitiveType) {
+                        val v = f.getLong(obj)
+                        if (v in 1_500_000_000L..2_500_000_000L) return v * 1000
+                        if (v in 1_500_000_000_000L..2_500_000_000_000L) return v
+                    } else if (t == java.lang.Long::class.java) {
+                        val v = f.get(obj) as? Long ?: 0
+                        if (v in 1_500_000_000L..2_500_000_000L) return v * 1000
+                        if (v in 1_500_000_000_000L..2_500_000_000_000L) return v
+                    } else if (t == java.lang.Integer::class.javaPrimitiveType) {
+                        val v = f.getInt(obj).toLong()
+                        if (v in 1_500_000_000L..2_500_000_000L) return v * 1000
+                    } else if (!t.isPrimitive && !t.isArray && !t.name.startsWith("java.") &&
+                        !t.name.startsWith("android.") && !t.name.startsWith("kotlin.")
+                    ) {
+                        val child = f.get(obj) ?: continue
+                        val r = findCreateTimeMs(child, depth + 1, visited)
+                        if (r > 0) return r
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+            clazz = clazz.superclass
+        }
+        return 0
+    }
 }
