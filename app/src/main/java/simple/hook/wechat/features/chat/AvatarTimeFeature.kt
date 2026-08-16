@@ -60,7 +60,7 @@ object AvatarTimeFeature : Feature {
             finder.findMethodsByStrings(
                 classLoader,
                 onlyPackages = listOf("com.tencent.mm"),
-                strings = arrayOf("MicroMsg.MvvmChattingItem", "[onBindView]")
+                strings = arrayOf("[onBindView]")
             )
         }.getOrDefault(emptyList())
         if (methods.isEmpty()) {
