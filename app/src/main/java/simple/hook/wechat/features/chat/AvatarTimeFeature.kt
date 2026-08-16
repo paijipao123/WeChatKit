@@ -60,10 +60,6 @@ object AvatarTimeFeature : Feature {
             )
         }.getOrDefault(emptyList())
         if (methods.isEmpty()) {
-            Logger.e("[$name] 未找到 onBindView 方法")
-            return
-        }
-        if (methods.isEmpty()) {
             Logger.e("[$name] 未找到 onBindView 方法(字符串定位失败), 走类名 fallback")
         }
         methods.take(3).forEach { method ->
