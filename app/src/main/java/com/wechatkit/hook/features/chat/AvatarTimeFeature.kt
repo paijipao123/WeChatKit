@@ -79,6 +79,25 @@ object AvatarTimeFeature : Feature {
             XposedBridge.hookAllMethods(g0, "setChattingItem", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     try {
+                        // dump setChattingItem 参数(找 MsgInfo)
+                        if (diagCount.get() < 3) {
+                            val argDump = StringBuilder("setChattingItem 参数: ")
+                            param.args.forEachIndexed { idx, a ->
+                                val d = when (a) {
+                                    null -> "null"
+                                    is String -> "Str(${a.take(12)})"
+                                    is Number -> "${a.javaClass.simpleName}($a)"
+                                    is View -> "V:${a.javaClass.simpleName}"
+                                    else -> a.javaClass.name.substringAfterLast('.')
+                                }
+                                argDump.append("[").append(idx).append("]").append(a?.javaClass?.name ?: "").append("=").append(d).append(" | ")
+                                if (a != null && a !is String && a !is Number && a !is View) {
+                                    val ct = readCreateTimeSec(a)
+                                    if (ct > 0) argDump.append("[createTime=").append(ct).append("]")
+                                }
+                            }
+                            Logger.i("[$name] [DIAG] $argDump")
+                        }
                         val avatar = runCatching {
                             XposedHelpers.getObjectField(param.thisObject, "avatarIV") as? View
                         }.getOrNull() ?: return
