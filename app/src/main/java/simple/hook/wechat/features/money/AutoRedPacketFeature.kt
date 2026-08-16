@@ -200,7 +200,6 @@ object AutoRedPacketFeature : Feature {
             val methods = finder.findMethodsByStrings(
                 classLoader,
                 declaredClassName = recvCls,
-                onlyPackages = listOf("com.tencent.mm"),
                 strings = arrayOf("MicroMsg.NetSceneReceiveLuckyMoney"),
                 paramCount = null
             )

@@ -93,7 +93,6 @@ object AntiRecallFeature : Feature {
         for (cand in revokeCandidates) {
             val revokeMethods = finder.findMethodsByStrings(
                 classLoader,
-                onlyPackages = listOf("com.tencent.mm"),
                 strings = cand
             )
             if (revokeMethods.isNotEmpty()) {

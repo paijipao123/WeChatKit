@@ -122,7 +122,6 @@ object HideAvatarFeature : Feature {
         if (finder != null) {
             val bindMethods = finder.findMethodsByStrings(
                 classLoader,
-                onlyPackages = listOf("com.tencent.mm"),
                 strings = arrayOf("MicroMsg.MvvmChattingItem", "[onBindView]")
             )
             if (bindMethods.isNotEmpty()) {

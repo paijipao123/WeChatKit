@@ -306,8 +306,7 @@ object RoundAvatarFeature : Feature {
                 finder.findMethodsByStrings(
                     classLoader,
                     declaredClassName = "com.tencent.mm.pluginsdk.ui.u",
-                    onlyPackages = listOf("com.tencent.mm"),
-                    strings = arrayOf("MicroMsg.AvatarDrawable")
+                        strings = arrayOf("MicroMsg.AvatarDrawable")
                 )
             }.getOrDefault(emptyList())
             methods.take(4).forEach { method ->

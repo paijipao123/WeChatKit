@@ -54,8 +54,7 @@ object DexScanService {
                             val methods = finder.findMethodsByStrings(
                                 classLoader,
                                 declaredClassName = item.declared,
-                                onlyPackages = listOf("com.tencent.mm"),
-                                strings = item.strings
+                                                strings = item.strings
                             )
                             if (methods.isEmpty()) {
                                 Logger.w("DexScan: 失败 ${item.name} -> ${item.strings.joinToString()}")

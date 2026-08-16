@@ -59,7 +59,6 @@ object AvatarTimeFeature : Feature {
         val methods = runCatching {
             finder.findMethodsByStrings(
                 classLoader,
-                onlyPackages = listOf("com.tencent.mm"),
                 strings = arrayOf("[onBindView]")
             )
         }.getOrDefault(emptyList())

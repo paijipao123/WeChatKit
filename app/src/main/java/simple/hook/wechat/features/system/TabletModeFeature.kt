@@ -105,8 +105,7 @@ object TabletModeFeature : Feature {
                 finder.findMethodsByStrings(
                     classLoader,
                     declaredClassName = declared,
-                    onlyPackages = listOf("com.tencent.mm"),
-                    strings = strings
+                        strings = strings
                 )
             }.getOrDefault(emptyList())
         } else emptyList()
@@ -115,8 +114,7 @@ object TabletModeFeature : Feature {
             runCatching {
                 finder.findMethodsByStrings(
                     classLoader,
-                    onlyPackages = listOf("com.tencent.mm"),
-                    strings = strings
+                        strings = strings
                 )
             }.getOrDefault(emptyList())
         } else emptyList()
