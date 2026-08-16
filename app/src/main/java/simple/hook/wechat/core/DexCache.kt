@@ -13,25 +13,25 @@ object DexCache {
     /** 查询 key -> 结果（类名或 类名|方法名|参数, 多条用 \u0001 分隔）。 */
     fun get(key: String): String? {
         return runCatching {
-            val app = Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null)
-            app.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
-                .getString(key, null)
+            val app = Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null) as? android.app.Application
+            app?.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+                ?.getString(key, null)
         }.getOrNull()
     }
 
     fun put(key: String, value: String) {
         runCatching {
-            val app = Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null)
-            app.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
-                .edit().putString(key, value).apply()
+            val app = Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null) as? android.app.Application
+            app?.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+                ?.edit()?.putString(key, value)?.apply()
         }
     }
 
     fun clear() {
         runCatching {
-            val app = Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null)
-            app.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
-                .edit().clear().apply()
+            val app = Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null) as? android.app.Application
+            app?.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+                ?.edit()?.clear()?.apply()
         }
     }
 
