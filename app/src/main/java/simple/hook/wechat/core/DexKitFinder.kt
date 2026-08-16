@@ -194,8 +194,21 @@ class DexKitFinder internal constructor(
                 Logger.w("DexKitFinder: native 库加载失败，跳过 DexKit 相关功能")
                 return
             }
+            // 关键（参考 WeKit DexKitUtils）：用微信 APK 的 sourceDir 创建 bridge，
+            // 才能扫描完整主 APK dex。用 classLoader 创建只会扫到 Tinker 补丁 dex，
+            // 导致主 APK 的方法（如 onBindView）定位不到。
+            val hostApkPath = runCatching {
+                val app = Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication").invoke(null) as? android.app.Application
+                app?.applicationInfo?.sourceDir
+            }.getOrNull()
+            Logger.i("DexKitFinder: 宿主 APK 路径: $hostApkPath")
             runCatching {
-                DexKitBridge.create(classLoader, useMemoryDexFile)
+                if (hostApkPath != null) {
+                    DexKitBridge.create(hostApkPath)
+                } else {
+                    DexKitBridge.create(classLoader, useMemoryDexFile)
+                }
             }.onSuccess { bridge ->
                 try {
                     bridge.use { DexKitFinder(it).run(block) }
