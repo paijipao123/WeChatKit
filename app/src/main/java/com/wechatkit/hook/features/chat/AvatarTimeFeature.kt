@@ -46,10 +46,6 @@ object AvatarTimeFeature : Feature {
 
     private val diagCount = java.util.concurrent.atomic.AtomicInteger(0)
 
-    /** g0(holder) -> createTime(ms) 缓存：同一绑定对象不重复递归反射。 */
-    private val timeCache =
-        java.util.Collections.synchronizedMap(java.util.WeakHashMap<Any, Long>())
-
     override fun hook(classLoader: ClassLoader, finder: DexKitFinder?) {
         if (!Prefs.getBoolean("feat_avatar_time", false)) return
         Logger.i("[$name] 开始 Hook (mode=${mode()})")
@@ -70,6 +66,7 @@ object AvatarTimeFeature : Feature {
                         }
                         if (diagCount.getAndIncrement() < 8) {
                             Logger.i("[$name] [DIAG] create, mode=${mode()}, avatar=${avatar.javaClass.simpleName}")
+                            if (diagCount.get() < 4) Logger.i("[$name] [DIAG] 视图树: ${dumpTree(view)}")
                         }
                     } catch (e: Throwable) {
                         if (diagCount.getAndIncrement() < 8) Logger.e("[$name] [DIAG] create 异常: $e")
@@ -88,20 +85,14 @@ object AvatarTimeFeature : Feature {
                         val itemRoot = runCatching {
                             XposedHelpers.getObjectField(param.thisObject, "convertView") as? View
                         }.getOrNull()
-                        var timeText = itemRoot?.let { getTimeText(it) } ?: ""
-                        if (timeText.isEmpty()) {
-                            // timeTV 大多为空：从 g0 的消息数据递归找 createTime（秒/毫秒时间戳）并格式化
-                            var ts = timeCache[param.thisObject] ?: 0
-                            if (ts == 0L) {
-                                ts = findCreateTimeMs(param.thisObject, 0, java.util.HashSet())
-                                if (ts > 0) timeCache[param.thisObject] = ts
-                            }
-                            if (ts > 0) {
-                                timeText = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-                                    .format(java.util.Date(ts))
-                            }
-                        }
-                        if (diagCount.getAndIncrement() < 8) {
+                        // 从 holder(tag) 找 MsgInfo 读 field_createTime（holder 复用故不缓存）
+                        val tag = itemRoot?.tag ?: param.thisObject
+                        val ts = findMsgCreateTimeMs(tag)
+                        val timeText = if (ts > 0) {
+                            java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                                .format(java.util.Date(ts))
+                        } else ""
+                        if (diagCount.getAndIncrement() < 12) {
                             Logger.i("[$name] [DIAG] 时间文本='$timeText'")
                         }
 
@@ -268,6 +259,27 @@ object AvatarTimeFeature : Feature {
         }
     }
 
+    /** dump 视图树（前两层，含 LinearLayout 方向），用于定位气泡容器。 */
+    private fun dumpTree(root: View): String {
+        val sb = StringBuilder()
+        fun dump(v: View, depth: Int) {
+            if (depth > 2 || sb.length > 400) return
+            sb.append("  ".repeat(depth))
+            sb.append(v.javaClass.simpleName)
+            if (v is LinearLayout) sb.append(if (v.orientation == LinearLayout.VERTICAL) "(V)" else "(H)")
+            if (v.id != View.NO_ID) sb.append("#").append(java.lang.Integer.toHexString(v.id))
+            sb.append("\n")
+            if (v is ViewGroup) {
+                for (i in 0 until v.childCount) {
+                    if (sb.length > 400) return
+                    dump(v.getChildAt(i), depth + 1)
+                }
+            }
+        }
+        dump(root, 0)
+        return sb.toString()
+    }
+
     /** 从头像窗口坐标判断消息方向（左=对方，右=自己）。 */
     private fun isLeftAvatar(avatar: View): Boolean {
         if (avatar.width <= 0 || !avatar.isAttachedToWindow) return true
@@ -278,32 +290,55 @@ object AvatarTimeFeature : Feature {
         return cx <= screenW / 2f
     }
 
-    /** 从消息 item 的 tag(holder) 反射微信自带的时间 TextView，取格式化好的文本。 */
-    private fun getTimeText(itemRoot: View): String {
-        val tag = itemRoot.tag ?: return ""
-        // 诊断：dump holder 字段（找 createTime 等消息数据字段）
-        if (diagCount.get() < 5) {
-            val sb = StringBuilder()
-            tag.javaClass.declaredFields.take(30).forEach { sb.append(it.name).append(",") }
-            Logger.i("[$name] [DIAG] holder=${tag.javaClass.simpleName} 字段: $sb")
+    /** 从消息 item 的 tag(holder) 递归找 MsgInfo 对象（类声明了 field_createTime 长整型字段），
+     * 读 field_createTime 得秒级时间戳。参考 WeKit getMsgInfoFromTag 的思路：优先调
+     * "无参且返回 MsgInfo" 的方法，否则遍历字段找。 */
+    private fun findMsgCreateTimeMs(tag: Any): Long {
+        // 1) holder 上无参方法返回 MsgInfo
+        runCatching {
+            for (m in tag.javaClass.declaredMethods) {
+                if (m.parameterCount != 0) continue
+                val ret = m.returnType
+                if (!isMsgInfoClass(ret)) continue
+                m.isAccessible = true
+                val mi = m.invoke(tag) ?: continue
+                val t = readCreateTimeSec(mi)
+                if (t > 0) return t * 1000
+            }
         }
-        return runCatching {
-            val tv = Reflect.findFieldByName(tag, "timeTV") as? TextView
-            tv?.text?.toString() ?: ""
-        }.getOrDefault("")
+        // 2) 递归遍历字段找 MsgInfo
+        return findMsgInfoInFields(tag, 0, java.util.HashSet())
     }
 
-    private fun dp2px(ctx: android.content.Context, dp: Int): Int =
-        (dp * ctx.resources.displayMetrics.density).toInt()
+    private fun isMsgInfoClass(c: Class<*>): Boolean {
+        var cl: Class<*>? = c
+        while (cl != null && cl != Any::class.java) {
+            for (f in cl.declaredFields) {
+                if (f.name == "field_createTime" && f.type == java.lang.Long.TYPE) return true
+            }
+            cl = cl.superclass
+        }
+        return false
+    }
 
-    /**
-     * 从消息对象递归查找 createTime 时间戳：
-     * - 秒级（约 1.5e9 ~ 2.5e9，当前时间 2026 年 ≈ 1.77e9）→ 乘 1000 转毫秒；
-     * - 毫秒级（约 1.5e12 ~ 2.5e12）→ 直接返回。
-     * 找不到返回 0。限制深度与访问数量防止卡顿。
-     */
-    private fun findCreateTimeMs(obj: Any?, depth: Int, visited: java.util.HashSet<Int>): Long {
-        if (obj == null || depth > 5 || visited.size > 2000) return 0
+    private fun readCreateTimeSec(mi: Any): Long = runCatching {
+        var cl: Class<*>? = mi.javaClass
+        while (cl != null && cl != Any::class.java) {
+            for (f in cl.declaredFields) {
+                if (f.name == "field_createTime" && f.type == java.lang.Long.TYPE) {
+                    f.isAccessible = true
+                    val v = f.getLong(mi)
+                    if (v in 1_000_000_000L..2_500_000_000L) return v
+                    if (v in 1_000_000_000_000L..2_500_000_000_000L) return v / 1000
+                }
+            }
+            cl = cl.superclass
+        }
+        0L
+    }.getOrDefault(0L)
+
+    private fun findMsgInfoInFields(obj: Any?, depth: Int, visited: java.util.HashSet<Int>): Long {
+        if (obj == null || depth > 4 || visited.size > 800) return 0
         if (obj is String || obj is Number || obj is Boolean || obj is Char ||
             obj is android.graphics.drawable.Drawable || obj is View || obj is android.app.Activity
         ) return 0
@@ -314,29 +349,21 @@ object AvatarTimeFeature : Feature {
         var checked = 0
         while (clazz != null && clazz != Any::class.java && checked < 40) {
             for (f in clazz.declaredFields) {
-                if (++checked > 600) return 0
+                if (++checked > 400) return 0
                 if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
                 try {
                     f.isAccessible = true
                     val t = f.type
-                    if (t == java.lang.Long::class.javaPrimitiveType) {
-                        val v = f.getLong(obj)
-                        if (v in 1_500_000_000L..2_500_000_000L) return v * 1000
-                        if (v in 1_500_000_000_000L..2_500_000_000_000L) return v
-                    } else if (t == java.lang.Long::class.java) {
-                        val v = f.get(obj) as? Long ?: 0
-                        if (v in 1_500_000_000L..2_500_000_000L) return v * 1000
-                        if (v in 1_500_000_000_000L..2_500_000_000_000L) return v
-                    } else if (t == java.lang.Integer::class.javaPrimitiveType) {
-                        val v = f.getInt(obj).toLong()
-                        if (v in 1_500_000_000L..2_500_000_000L) return v * 1000
-                    } else if (!t.isPrimitive && !t.isArray && !t.name.startsWith("java.") &&
-                        !t.name.startsWith("android.") && !t.name.startsWith("kotlin.")
-                    ) {
-                        val child = f.get(obj) ?: continue
-                        val r = findCreateTimeMs(child, depth + 1, visited)
-                        if (r > 0) return r
+                    if (t.isPrimitive || t.isArray || t.name.startsWith("java.") ||
+                        t.name.startsWith("android.") || t.name.startsWith("kotlin.")
+                    ) continue
+                    val child = f.get(obj) ?: continue
+                    if (isMsgInfoClass(child.javaClass)) {
+                        val s = readCreateTimeSec(child)
+                        if (s > 0) return s * 1000
                     }
+                    val r = findMsgInfoInFields(child, depth + 1, visited)
+                    if (r > 0) return r
                 } catch (_: Throwable) {
                 }
             }
@@ -344,4 +371,7 @@ object AvatarTimeFeature : Feature {
         }
         return 0
     }
+
+    private fun dp2px(ctx: android.content.Context, dp: Int): Int =
+        (dp * ctx.resources.displayMetrics.density).toInt()
 }
