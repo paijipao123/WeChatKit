@@ -296,26 +296,70 @@ object AvatarTimeFeature : Feature {
             Logger.i("[$name] [DIAG] $sb")
         }
 
-        // 1) 从 thisObject 找 ChattingDataAdapter，getItem(msgId) 拿 MsgInfo
-        val adapterCls = runCatching {
-            classLoader.loadClass("com.tencent.mm.ui.chatting.adapter.ChattingDataAdapter")
-        }.getOrNull()
-        val msgId = (param.args.getOrNull(2) as? Int) ?: -1
-        val msgInfo = adapterCls?.let { cls ->
-            val adapter = findFieldOfType(param.thisObject, cls)
-            adapter?.let { a ->
-                runCatching {
-                    val m = a.javaClass.methods.firstOrNull {
-                        it.name == "getItem" && it.parameterTypes.size == 1
-                    }
-                    m?.invoke(a, msgId)
-                }.getOrNull()
+        // 时间来源(依次尝试):
+        // A) args 里的对象直接读 field_createTime
+        var createTimeSec = 0L
+        for (a in param.args) {
+            if (a != null && a !is String && a !is Number && a !is View) {
+                createTimeSec = readCreateTimeSec(a)
+                if (createTimeSec > 0) break
             }
         }
-        val createTimeSec = msgInfo?.let { readCreateTimeSec(it) } ?: 0L
+        // B) thisObject(ve5.g) 找 adapter 字段 -> getItem(msgId)
+        val msgId = (param.args.getOrNull(2) as? Int) ?: -1
+        if (createTimeSec <= 0) {
+            val adapter = findFieldOfAdapterLike(param.thisObject)
+            if (adapter != null) {
+                val msgInfo = runCatching {
+                    val m = adapter.javaClass.methods.firstOrNull {
+                        it.name == "getItem" && it.parameterTypes.size == 1
+                    }
+                    m?.invoke(adapter, msgId)
+                }.getOrNull()
+                createTimeSec = msgInfo?.let { readCreateTimeSec(it) } ?: 0L
+                if (diagCount.get() < 8) Logger.i("[$name] [DIAG] adapter=${adapter.javaClass.name} getItem($msgId) -> ${msgInfo?.javaClass?.name} ct=$createTimeSec")
+            }
+        }
+        // C) 对象图递归(thisObject + args)
+        if (createTimeSec <= 0) {
+            createTimeSec = findCreateTimeInGraph(param.thisObject, 0, java.util.HashSet())
+            if (createTimeSec <= 0) {
+                for (a in param.args) {
+                    if (a != null) {
+                        createTimeSec = findCreateTimeInGraph(a, 0, java.util.HashSet())
+                        if (createTimeSec > 0) break
+                    }
+                }
+            }
+        }
+        // D) ve5.g 字段 dump(前几次)
+        if (diagCount.get() < 3) {
+            val sb = StringBuilder("ve5.g 字段: ")
+            var c: Class<*>? = param.thisObject.javaClass
+            var n = 0
+            while (c != null && c != Any::class.java && n < 40) {
+                for (f in c.declaredFields) {
+                    if (++n > 40) break
+                    if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                    try {
+                        f.isAccessible = true
+                        val v = f.get(param.thisObject)
+                        val d = when (v) {
+                            null -> "null"
+                            is String -> "Str(${v.take(8)})"
+                            is Number -> "${v.javaClass.simpleName}($v)"
+                            else -> v.javaClass.name.substringAfterLast('.')
+                        }
+                        sb.append(f.name).append(":").append(f.type.simpleName).append("=").append(d).append(" | ")
+                    } catch (_: Throwable) {}
+                }
+                c = c.superclass
+            }
+            Logger.i("[$name] [DIAG] $sb")
+        }
 
-        if (diagCount.getAndIncrement() < 8) {
-            Logger.i("[$name] [DIAG] msgId=$msgId msgInfo=${msgInfo?.javaClass?.name} createTime=$createTimeSec")
+        if (diagCount.getAndIncrement() < 10) {
+            Logger.i("[$name] [DIAG] createTime=$createTimeSec")
         }
         if (createTimeSec <= 0) return
 
@@ -324,13 +368,33 @@ object AvatarTimeFeature : Feature {
 
         if (mode() == "message") {
             // WA 式：保留微信原生 timeTV 不动，在气泡下方注入无背景时间 TextView
-            val holderView = findFieldByNameInHierarchy(holder, "convertView") as? View ?: return
+            val holderView = findFieldByNameInHierarchy(holder, "convertView") as? View
+                ?: findFieldOfType(holder, View::class.java) as? View ?: return
             ensureMsgTimeBelowBubble(holderView, timeText)
         } else {
             // 头像下方注入
-            val holderView = findFieldByNameInHierarchy(holder, "convertView") as? View ?: return
+            val holderView = findFieldByNameInHierarchy(holder, "convertView") as? View
+                ?: findFieldOfType(holder, View::class.java) as? View ?: return
             ensureAvatarTime(holderView, timeText)
         }
+    }
+
+    /** 在对象上找“像 adapter”的字段：有 getItem(int) 方法。 */
+    private fun findFieldOfAdapterLike(obj: Any): Any? {
+        var c: Class<*>? = obj.javaClass
+        while (c != null && c != Any::class.java) {
+            for (f in c.declaredFields) {
+                if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                val v = runCatching { f.isAccessible = true; f.get(obj) }.getOrNull() ?: continue
+                if (v is String || v is Number || v is View) continue
+                val hasGetItem = runCatching {
+                    v.javaClass.methods.any { it.name == "getItem" && it.parameterTypes.size == 1 }
+                }.getOrDefault(false)
+                if (hasGetItem) return v
+            }
+            c = c.superclass
+        }
+        return null
     }
 
     /** message 模式（WA 式）：气泡下方无背景时间。item 根是 RelativeLayout。 */
