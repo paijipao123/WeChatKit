@@ -16,13 +16,14 @@ import kotlin.math.min
 /**
  * 圆形头像（全局）。
  *
- * 微信 8.0.76 实测：消息头像 drawable 是 `ta5$d`（默认包，非 pluginsdk.ui.x），
+ * 微信 8.0.76 实测：消息头像 drawable 是 `ta5.d`（包 `ta5` 下的独立类 d，
+ * dex 描述符 `Lta5/d;`，非内部类、非 pluginsdk.ui.x），
  * 该类无圆角逻辑，直接画位图；圆角由外层 MaskLayout 遮罩（setMaskBitmap/setMaskDrawable）完成。
  *
  * 三层方案：
- * 1. hook `ta5$d.draw` → Canvas 圆形 clipPath 强制裁剪（任何场景绘制头像位图都会被切圆，
+ * 1. hook `ta5.d.draw` → Canvas 圆形 clipPath 强制裁剪（任何场景绘制头像位图都会被切圆，
  *    不依赖微信自己的圆角路径）；save/restore 成对；
- * 2. hook `ta5$d` 构造 → 诊断第二个 int 参数（疑似圆角半径）；
+ * 2. hook `ta5.d` 构造 → 诊断第二个 int 参数（疑似圆角半径）；
  * 3. hook MaskLayout.setMaskBitmap/setMaskDrawable → 诊断遮罩路径（确认圆形遮罩是否生效）；
  * 4. 保留 x / u#b 双保险（会话列表等场景 drawable 可能是 x）。
  */
@@ -53,15 +54,15 @@ object RoundAvatarFeature : Feature {
         Logger.i("[$name] 开始 Hook (radius=$radius)")
         if (finder == null) return
 
-        // ---- 0. 消息头像 drawable：ta5$d（默认包） ----
+        // ---- 0. 消息头像 drawable：ta5.d（包 ta5 下的独立类 d，非内部类） ----
         runCatching {
-            val ta5d = XposedHelpers.findClass("ta5\$d", classLoader)
+            val ta5d = XposedHelpers.findClass("ta5.d", classLoader)
 
             XposedBridge.hookAllConstructors(ta5d, object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     if (drawDiagCount.getAndIncrement() < 10) {
                         val intArg = param.args.getOrNull(1)
-                        Logger.i("[$name] [DIAG] ta5\$d 构造: args=${param.args.size}, intArg=$intArg, cls=${param.thisObject.javaClass.name}")
+                        Logger.i("[$name] [DIAG] ta5.d 构造: args=${param.args.size}, intArg=$intArg, cls=${param.thisObject.javaClass.name}")
                     }
                 }
             })
@@ -81,7 +82,7 @@ object RoundAvatarFeature : Feature {
                         runCatching { canvas.clipPath(path) }
                         canvasSaves[canvas] = sc
                         if (drawDiagCount.getAndIncrement() < 10) {
-                            Logger.i("[$name] [DIAG] ta5\$d.draw 裁剪 半径=$r bounds=${b.width()}x${b.height()} hw=${canvas.isHardwareAccelerated}")
+                            Logger.i("[$name] [DIAG] ta5.d.draw 裁剪 半径=$r bounds=${b.width()}x${b.height()} hw=${canvas.isHardwareAccelerated}")
                         }
                     } catch (_: Throwable) {}
                 }
@@ -94,8 +95,8 @@ object RoundAvatarFeature : Feature {
                     } catch (_: Throwable) {}
                 }
             })
-            Logger.i("[$name] ta5\$d.draw 圆形裁剪已挂载")
-        }.onFailure { Logger.e("[$name] ta5\$d hook 失败: $it") }
+            Logger.i("[$name] ta5.d.draw 圆形裁剪已挂载")
+        }.onFailure { Logger.e("[$name] ta5.d hook 失败: $it") }
 
         // ---- 0.5 MaskLayout 遮罩诊断 ----
         runCatching {
