@@ -22,10 +22,12 @@ object SettingsInjector {
 
     private const val TAG = "SettingsInjector"
 
-    private const val MENU_ID_WEKIT = 0x5A5A11  // 自定义菜单 ID
+    private const val MENU_ID_WEKIT = 0x5A5A11  // 设置入口
+    private const val MENU_ID_SCAN = 0x5A5A12   // 功能适配(搜索)
 
     private const val KEY_ENTRY = "wechathook_settings_entry"
     private const val TITLE_ENTRY = "WeChatSimple 设置"
+    private const val TITLE_SCAN = "功能适配"
 
     // 微信类名（已按 8.0.76 dex 验证）
     private const val CLS_MAIN_SETTINGS_UI = "com.tencent.mm.plugin.setting.ui.setting_new.MainSettingsUI"
@@ -67,6 +69,7 @@ object SettingsInjector {
                         val menu = param.args[0] as? Menu ?: return
                         if (menu.findItem(MENU_ID_WEKIT) == null) {
                             menu.add(0, MENU_ID_WEKIT, 0, TITLE_ENTRY)
+                            menu.add(0, MENU_ID_SCAN, 1, TITLE_SCAN)
                             Logger.i("[$TAG] 已注入新版设置菜单入口")
                         }
                     } catch (_: Throwable) {}
@@ -80,9 +83,15 @@ object SettingsInjector {
                         val activity = param.thisObject as? Activity ?: return
                         if (activity.javaClass.name != CLS_MAIN_SETTINGS_UI) return
                         val item = param.args[0] as? MenuItem ?: return
-                        if (item.itemId == MENU_ID_WEKIT) {
-                            openModuleSettings(activity)
-                            param.result = true
+                        when (item.itemId) {
+                            MENU_ID_WEKIT -> {
+                                openModuleSettings(activity)
+                                param.result = true
+                            }
+                            MENU_ID_SCAN -> {
+                                DexScanDialog.show(activity)
+                                param.result = true
+                            }
                         }
                     } catch (_: Throwable) {}
                 }

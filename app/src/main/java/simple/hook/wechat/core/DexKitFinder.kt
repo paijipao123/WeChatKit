@@ -242,9 +242,15 @@ class DexKitFinder internal constructor(
         }.getOrElse { emptyList() }
     }
 
-    /** 查找包含任一特征字符串的单个类名（取第一个匹配）。 */
-    fun findClassNameByStrings(vararg strings: String, onlyPackages: List<String>? = null): String? =
-        findClassNamesByStrings(*strings, onlyPackages = onlyPackages).firstOrNull()
+    /** 查找包含任一特征字符串的单个类名（取第一个匹配）。带缓存。 */
+    fun findClassNameByStrings(vararg strings: String, onlyPackages: List<String>? = null): String? {
+        DexCache.get(DexCache.keyForClass(strings))?.let { cached ->
+            if (cached.isNotEmpty()) return cached
+        }
+        val found = findClassNamesByStrings(*strings, onlyPackages = onlyPackages).firstOrNull()
+        if (found != null) DexCache.put(DexCache.keyForClass(strings), found)
+        return found
+    }
 
     /**
      * 查找方法：按特征字符串定位并实例化。
@@ -261,6 +267,24 @@ class DexKitFinder internal constructor(
         vararg strings: String,
         paramCount: Int? = null
     ): List<Method> {
+        // 缓存命中：类名|方法名|参数类型
+        DexCache.get(DexCache.keyForMethod(strings, declaredClassName))?.let { cached ->
+            if (cached.isNotEmpty()) {
+                val parts = cached.split("|")
+                if (parts.size >= 3) {
+                    val m = runCatching {
+                        val cls = classLoader.loadClass(parts[0])
+                        cls.declaredMethods.firstOrNull {
+                            it.name == parts[1] &&
+                                it.parameterTypes.joinToString(",") { t -> t.name } == parts[2]
+                        }
+                    }.getOrNull()
+                    if (m != null) {
+                        return listOf(m)
+                    }
+                }
+            }
+        }
         return runCatching {
             val st = strings.toSet()
             bridge.findMethod {
@@ -282,7 +306,15 @@ class DexKitFinder internal constructor(
             }.mapNotNull { md ->
                 runCatching { md.getMethodInstance(classLoader) }.getOrNull()
             }
-        }.getOrElse { emptyList() }
+        }.getOrElse { emptyList() }.also { list ->
+            // 查询成功则缓存第一条
+            val first = list.firstOrNull()
+            if (first != null) {
+                val value = first.declaringClass.name + "|" + first.name + "|" +
+                    first.parameterTypes.joinToString(",") { t -> t.name }
+                DexCache.put(DexCache.keyForMethod(strings, declaredClassName), value)
+            }
+        }
     }
 
     private fun findClassDataByName(name: String): ClassData? {
