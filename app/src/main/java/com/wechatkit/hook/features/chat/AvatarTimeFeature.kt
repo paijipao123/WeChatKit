@@ -94,6 +94,7 @@ object AvatarTimeFeature : Feature {
                         } else ""
                         if (diagCount.getAndIncrement() < 12) {
                             Logger.i("[$name] [DIAG] 时间文本='$timeText'")
+                            if (diagCount.get() < 4) Logger.i("[$name] [DIAG] holder 详情: ${dumpHolder(tag)}")
                         }
 
                         if (mode() == "avatar") {
@@ -257,6 +258,34 @@ object AvatarTimeFeature : Feature {
                 walkViews(root.getChildAt(i), visitor)
             }
         }
+    }
+
+    /** dump holder 所有字段类型和值摘要（找 MsgInfo 引用链）。 */
+    private fun dumpHolder(tag: Any): String {
+        val sb = StringBuilder("${tag.javaClass.name} ")
+        try {
+            var clazz: Class<*>? = tag.javaClass
+            var count = 0
+            while (clazz != null && clazz != Any::class.java && count < 50) {
+                for (f in clazz.declaredFields) {
+                    if (++count > 50) break
+                    if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                    try {
+                        f.isAccessible = true
+                        val v = f.get(tag)
+                        val desc = when (v) {
+                            null -> "null"
+                            is String -> "Str(${v.take(8)})"
+                            is Number -> "${v.javaClass.simpleName}($v)"
+                            else -> v.javaClass.name.substringAfterLast('.')
+                        }
+                        sb.append(f.name).append(":").append(f.type.simpleName).append("=").append(desc).append(" | ")
+                    } catch (_: Throwable) {}
+                }
+                clazz = clazz.superclass
+            }
+        } catch (_: Throwable) {}
+        return sb.toString()
     }
 
     /** dump 视图树（前两层，含 LinearLayout 方向），用于定位气泡容器。 */
