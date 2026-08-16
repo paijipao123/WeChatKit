@@ -349,6 +349,72 @@ object AvatarTimeFeature : Feature {
                 cm = cm.superclass
             }
         }
+        // dump j:y 和 l:ArrayList 实例内容
+        runCatching {
+            var cl: Class<*>? = tag.javaClass
+            while (cl != null && cl != Any::class.java) {
+                for (f in cl.declaredFields) {
+                    if (f.name != "j" && f.name != "l") continue
+                    f.isAccessible = true
+                    val v = f.get(tag) ?: continue
+                    when (v) {
+                        is java.util.List<*> -> {
+                            sb.append("\n[list ").append(f.name).append("] size=").append(v.size)
+                            if (v.size > 0) {
+                                val it = v[0]
+                                sb.append(" 首项=").append(it?.javaClass?.name).append(": ")
+                                if (it != null && it !is String && it !is Number) {
+                                    var c4: Class<*>? = it.javaClass
+                                    var n4 = 0
+                                    while (c4 != null && c4 != Any::class.java && n4 < 30) {
+                                        for (f4 in c4.declaredFields) {
+                                            if (++n4 > 30) break
+                                            if (java.lang.reflect.Modifier.isStatic(f4.modifiers)) continue
+                                            try {
+                                                f4.isAccessible = true
+                                                val v4 = f4.get(it)
+                                                val d4 = when (v4) {
+                                                    null -> "null"
+                                                    is String -> "Str(${v4.take(10)})"
+                                                    is Number -> "${v4.javaClass.simpleName}($v4)"
+                                                    else -> v4.javaClass.simpleName
+                                                }
+                                                sb.append(f4.name).append(":").append(f4.type.simpleName).append("=").append(d4).append(" | ")
+                                            } catch (_: Throwable) {}
+                                        }
+                                        c4 = c4.superclass
+                                    }
+                                }
+                            }
+                        }
+                        else -> {
+                            sb.append("\n[").append(f.name).append("] ").append(v.javaClass.name).append(": ")
+                            var c5: Class<*>? = v.javaClass
+                            var n5 = 0
+                            while (c5 != null && c5 != Any::class.java && n5 < 30) {
+                                for (f5 in c5.declaredFields) {
+                                    if (++n5 > 30) break
+                                    if (java.lang.reflect.Modifier.isStatic(f5.modifiers)) continue
+                                    try {
+                                        f5.isAccessible = true
+                                        val v5 = f5.get(v)
+                                        val d5 = when (v5) {
+                                            null -> "null"
+                                            is String -> "Str(${v5.take(10)})"
+                                            is Number -> "${v5.javaClass.simpleName}($v5)"
+                                            else -> v5.javaClass.simpleName
+                                        }
+                                        sb.append(f5.name).append(":").append(f5.type.simpleName).append("=").append(d5).append(" | ")
+                                    } catch (_: Throwable) {}
+                                }
+                                c5 = c5.superclass
+                            }
+                        }
+                    }
+                }
+                cl = cl.superclass
+            }
+        }
         // 深度 dump: chatHolder 与 chattingItem 实例的完整字段值(找时间戳)
         runCatching {
             var cl: Class<*>? = tag.javaClass
