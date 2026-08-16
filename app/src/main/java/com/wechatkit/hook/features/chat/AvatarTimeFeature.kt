@@ -418,9 +418,9 @@ object AvatarTimeFeature : Feature {
         }
         // 深度 dump: chatHolder 与 chattingItem 实例的完整字段值(找时间戳)
         runCatching {
-            var cl: Class<in Any>? = tag.javaClass
+            var cl: Class<*>? = tag.javaClass
             while (cl != null && cl != Any::class.java) {
-                val clazz = cl
+                val clazz: Class<*> = cl
                 for (f in clazz.declaredFields) {
                     if (f.name != "chatHolder" && f.name != "chattingItem" && f.name != "quoteView") continue
                     f.isAccessible = true
@@ -430,7 +430,8 @@ object AvatarTimeFeature : Feature {
                     var c3: Class<*>? = v.javaClass
                     var n3 = 0
                     while (c3 != null && c3 != Any::class.java && n3 < 40) {
-                        for (f3 in c3.declaredFields) {
+                        val c3c: Class<*> = c3
+                        for (f3 in c3c.declaredFields) {
                             if (++n3 > 40) break
                             if (java.lang.reflect.Modifier.isStatic(f3.modifiers)) continue
                             try {
@@ -445,7 +446,7 @@ object AvatarTimeFeature : Feature {
                                 sb.append(f3.name).append(":").append(f3.type.simpleName).append("=").append(d3).append(" | ")
                             } catch (_: Throwable) {}
                         }
-                        c3 = c3.superclass
+                        c3 = c3c.superclass
                     }
                 }
                 cl = clazz.superclass
