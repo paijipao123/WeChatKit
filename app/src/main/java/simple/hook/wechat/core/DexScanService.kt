@@ -16,16 +16,15 @@ object DexScanService {
         val declared: String? = null
     )
 
-    /** 全部搜索项（与各 Feature 使用的查询一致）。 */
+    /** 全部搜索项（与各 Feature 使用的查询一致）。多组候选依次尝试。 */
     fun allItems(): List<Item> = listOf(
-        Item("隐藏头像-头像类", false, arrayOf("avatarIV")),
         Item("消息绑定方法(onBindView)", true, arrayOf("MicroMsg.MvvmChattingItem", "[onBindView]")),
+        Item("消息绑定方法(备选)", true, arrayOf("[onBindView]")),
         Item("聊天数据适配器", false, arrayOf("MicroMsg.ChattingDataAdapterV3")),
         Item("圆形头像-加载方法", true, arrayOf("MicroMsg.AvatarDrawable")),
         Item("防撤回-解析方法", true, arrayOf("MicroMsg.SDK.XmlParser", "[ %s ]")),
         Item("防撤回-XmlParser 类", false, arrayOf("MicroMsg.SDK.XmlParser")),
-        Item("防撤回-撤回方法", true, arrayOf("doRevokeMsg xmlSrvMsgId=%d talker=%s isGet=%s")),
-        Item("防撤回-撤回方法(兜底)", true, arrayOf("doRevokeMsg")),
+        Item("防撤回-撤回方法", true, arrayOf("doRevokeMsg")),
         Item("自动收红包-接收类", false, arrayOf("MicroMsg.NetSceneReceiveLuckyMoney")),
         Item("自动收红包-拆包类", false, arrayOf("MicroMsg.NetSceneOpenLuckyMoney")),
         Item("自动收转账-操作类", false, arrayOf("/cgi-bin/mmpay-bin/transferoperation")),
@@ -60,6 +59,7 @@ object DexScanService {
                                 strings = item.strings
                             )
                             if (methods.isEmpty()) {
+                                Logger.w("DexScan: 失败 ${item.name} -> ${item.strings.joinToString()}")
                                 val r = Result(item.name, false, "未找到方法: ${item.strings.joinToString()}")
                                 results += r
                                 onItem(r)
@@ -79,6 +79,7 @@ object DexScanService {
                         else -> {
                             val clsName = finder.findClassNameByStrings(*item.strings)
                             if (clsName == null) {
+                                Logger.w("DexScan: 失败 ${item.name} -> ${item.strings.joinToString()}")
                                 val r = Result(item.name, false, "未找到类: ${item.strings.joinToString()}")
                                 results += r
                                 onItem(r)
