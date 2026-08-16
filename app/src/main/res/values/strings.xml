@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">WeChatKit</string>
-    <string name="module_description">微信增强 LSPosed 模块：去头像、防撤回、朋友圈防删、已读回执、自动收红包/转账。</string>
+    <string name="app_name">WeChatSimple</string>
+    <string name="module_description">微信简易增强 LSPosed 模块：去头像、防撤回、朋友圈防删、圆形头像、消息时间、自动收红包/转账。仅兼容微信 8.0.76。</string>
 </resources>

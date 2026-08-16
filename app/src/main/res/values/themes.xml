@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Material3 主题（设置页使用） -->
-    <style name="Theme.WeChatKit" parent="Theme.Material3.Light.NoActionBar">
+    <style name="Theme.WeChatSimple" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">@color/teal_600</item>
         <item name="colorOnPrimary">@color/white</item>
         <item name="colorPrimaryContainer">@color/teal_100</item>
