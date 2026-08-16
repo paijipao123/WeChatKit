@@ -212,7 +212,7 @@ object RoundAvatarFeature : Feature {
                         var resName = ""
                         if (intArg is Int) {
                             resName = runCatching {
-                                val app = android.app.ActivityThread.currentApplication()
+                                val app = Class.forName("android.app.ActivityThread").getMethod("currentApplication").invoke(null) as? android.app.Application
                                 app?.resources?.getResourceName(intArg) ?: ""
                             }.getOrDefault("")
                         }
