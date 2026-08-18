@@ -87,7 +87,14 @@ class MainActivity : AppCompatActivity() {
                         ParamItem("显示位置", "avatar_time_mode",
                             type = "choice",
                             options = listOf("头像下方", "消息下方"),
-                            optionValues = listOf("avatar", "message"))
+                            optionValues = listOf("avatar", "message")),
+                        ParamItem("时间格式", "avatar_time_format",
+                            "例如: HH:mm 或 yyyy/MM/dd HH:mm",
+                            "HH:mm = 时:分，yyyy/MM/dd HH:mm = 年/月/日 时:分"),
+                        ParamItem("字体大小", "avatar_time_size",
+                            type = "seekbar", min = 8, max = 18, step = 1,
+                            defaultValue = 11,
+                            supporting = "单位: sp，建议 10-14")
                     )),
                 SwitchItem("朋友圈防删",
                     "阻止他人删除朋友圈后消失",

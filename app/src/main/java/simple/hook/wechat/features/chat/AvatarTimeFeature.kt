@@ -1,9 +1,11 @@
 package simple.hook.wechat.features.chat
 
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.RelativeLayout
 import android.widget.TextView
 import simple.hook.wechat.core.DexKitFinder
 import simple.hook.wechat.core.Feature
@@ -12,16 +14,22 @@ import simple.hook.wechat.core.Prefs
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * 消息时间显示（两种模式）。参考 WeKit MessageTimeEnhancements 方案：
+ * 消息时间显示。
  *
- * - hook 消息绑定方法 onBindView（特征字符串 "MicroMsg.MvvmChattingItem"+"[onBindView]"）；
- * - args[0] = holder（含 timeTV/avatarIV/convertView 字段）；
- * - args[2] = msgId；thisObject 上取 ChattingDataAdapter 字段，getItem(msgId) 得 MsgInfo；
+ * 参考 WeKit2 MessageTimeEnhancements 方案：
+ * - hook onBindView（特征字符串 "MicroMsg.MvvmChattingItem"+"[onBindView]"）；
+ * - args[0] = holder；holder.tag 包含 timeTV 字段；
+ * - args[2] = msgId；通过 ChattingDataAdapter.getItem(msgId) 获取 MsgInfo；
  * - MsgInfo.field_createTime（秒）即发送时间；
- * - message 模式：直接改微信自带 timeTV（居中时间条）文本并强制可见；
- * - avatar 模式：把头像包进垂直容器，头像下方注入时间 TextView。
+ *
+ * 两种模式：
+ * - avatar 模式：头像下方注入时间 TextView（保 MastLayout 圆形遮罩）
+ * - message 模式：直接修改微信原生 timeTV 的文本样式
  */
 object AvatarTimeFeature : Feature {
 
@@ -36,84 +44,62 @@ object AvatarTimeFeature : Feature {
 
     private const val AVATAR_VIEW_CLASS = "com.tencent.mm.ui.chatting.view.ChattingAvatarImageView"
 
-    /** 显示模式：avatar=头像下方 / message=消息下方(微信时间条) */
+    /** 显示模式：avatar=头像下方 / message=直接改原生timeTV */
     private fun mode(): String = Prefs.getString("avatar_time_mode", "avatar")
 
-    /** avatar -> 头像下方时间 TextView（弱引用）。 */
+    /** 时间格式 */
+    private fun timeFormat(): String = Prefs.getString("avatar_time_format", "HH:mm")
+
+    /** 字体大小 sp */
+    private fun textSize(): Float = Prefs.getInt("avatar_time_size", 11).toFloat()
+
+    /** avatar 模式：头像 -> 时间 TextView（弱引用）。 */
     private val avatarTimeViews = java.util.Collections.synchronizedMap(java.util.WeakHashMap<View, TextView>())
 
-    /** item 根 -> 气泡下方时间 TextView（弱引用）。 */
-    private val msgTimeViews = java.util.Collections.synchronizedMap(java.util.WeakHashMap<View, TextView>())
-
-    /** getItem 参数 -> createTime(秒) 映射。 */
-    private val itemTimeMap = java.util.Collections.synchronizedMap(java.util.LinkedHashMap<Int, Long>())
+    /** message 模式：item 根 -> 是否已处理过（防止重复）。 */
+    private val processedItems = java.util.Collections.synchronizedMap(java.util.WeakHashMap<View, Boolean>())
 
     private val diagCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     override fun hook(classLoader: ClassLoader, finder: DexKitFinder?) {
         if (!Prefs.getBoolean("feat_avatar_time", false)) return
-        Logger.i("[$name] 开始 Hook (mode=${mode()})")
+        Logger.i("[$name] 开始 Hook (mode=${mode()}, format=${timeFormat()})")
         if (finder == null) return
 
-        // hook onBindView（WeKit 同款：特征字符串定位）
+        // hook onBindView（WeKit2 同款：特征字符串定位）
         val methods = runCatching {
             finder.findMethodsByStrings(
                 classLoader,
                 strings = arrayOf("MicroMsg.MvvmChattingItem", "[onBindView]")
             )
         }.getOrDefault(emptyList())
-        if (methods.isEmpty()) {
-            Logger.e("[$name] 未找到 onBindView 方法(字符串定位失败), 走类名 fallback")
-        }
-        methods.take(3).forEach { method ->
-            runCatching {
-                XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        try {
-                            handleOnBindView(param, classLoader)
-                        } catch (t: Throwable) {
-                            if (diagCount.getAndIncrement() < 8) Logger.e("[$name] onBindView 处理异常: $t")
+
+        if (methods.isNotEmpty()) {
+            methods.take(3).forEach { method ->
+                runCatching {
+                    XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            try {
+                                handleOnBindView(param, classLoader)
+                            } catch (t: Throwable) {
+                                if (diagCount.getAndIncrement() < 5) {
+                                    Logger.e("[$name] onBindView 处理异常: $t")
+                                }
+                            }
                         }
-                    }
-                })
-                Logger.i("[$name] 已 Hook onBindView: ${method.declaringClass.name}#${method.name}")
-            }.onFailure { Logger.e("[$name] onBindView Hook 失败: $it") }
-        }
-
-        // g0.setChattingItem 主路径(8.0.76 实际绑定入口)
-        hookG0(classLoader)
-
-        // ChattingDataAdapter.getItem -> msgId/time 映射(DexKit 动态定位类名)
-        val adapterClsName = runCatching {
-            finder.findClassNameByStrings("MicroMsg.ChattingDataAdapterV3")
-        }.getOrNull()
-        Logger.i("[$name] ChattingDataAdapter 类: $adapterClsName")
-        if (adapterClsName != null) runCatching {
-            val adapterCls = XposedHelpers.findClass(adapterClsName, classLoader)
-            XposedBridge.hookAllMethods(adapterCls, "getItem", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    try {
-                        val mi = param.result ?: return
-                        val ct = readCreateTimeSec(mi)
-                        if (ct <= 0) return
-                        val key = (param.args.getOrNull(0) as? Int) ?: return
-                        // LRU 上限
-                        if (itemTimeMap.size > 5000) itemTimeMap.clear()
-                        itemTimeMap[key] = ct
-                        if (diagCount.get() < 6) Logger.i("[$name] [DIAG] getItem($key) ct=$ct")
-                    } catch (_: Throwable) {}
-                }
-            })
-            Logger.i("[$name] 已 Hook ChattingDataAdapter.getItem 映射")
-        }.onFailure { Logger.e("[$name] getItem hook 失败: $it") }
-
-        // fallback: 类名+onBindView（与 HideAvatarFeature 同款）
-        if (methods.isEmpty()) {
+                    })
+                    Logger.i("[$name] 已 Hook onBindView: ${method.declaringClass.name}#${method.name}")
+                }.onFailure { Logger.e("[$name] onBindView Hook 失败: $it") }
+            }
+        } else {
+            // fallback: 类名搜索
             val clsNames = runCatching {
                 finder.findClassNamesByStrings("MicroMsg.MvvmChattingItem", "[onBindView]")
             }.getOrDefault(emptyList())
             val target = clsNames.firstOrNull()
-                ?: runCatching { finder.findClassNamesByStrings("MvvmChattingItem", "onBindView").firstOrNull() }.getOrNull()
+                ?: runCatching {
+                    finder.findClassNamesByStrings("MvvmChattingItem", "onBindView").firstOrNull()
+                }.getOrNull()
             if (target != null) {
                 runCatching {
                     val clazz = classLoader.loadClass(target)
@@ -122,152 +108,237 @@ object AvatarTimeFeature : Feature {
                             try {
                                 handleOnBindView(param, classLoader)
                             } catch (t: Throwable) {
-                                if (diagCount.getAndIncrement() < 8) Logger.e("[$name] onBindView 处理异常: $t")
+                                if (diagCount.getAndIncrement() < 5) {
+                                    Logger.e("[$name] onBindView fallback 处理异常: $t")
+                                }
                             }
                         }
                     })
                     Logger.i("[$name] 已 Hook $target#onBindView (fallback)")
                 }.onFailure { Logger.e("[$name] fallback Hook $target 失败: $it") }
             } else {
-                Logger.e("[$name] fallback 也未找到 onBindView 类")
+                Logger.e("[$name] 未找到 onBindView 方法")
             }
         }
     }
 
-    // ============ 核心：消息绑定处理 ============
+    // ============ 核心：onBindView 处理 ============
 
-    /** g0.setChattingItem 主路径（8.0.76 绑定实际走这里）。 */
-    private fun hookG0(classLoader: ClassLoader) {
-        val g0 = runCatching {
-            XposedHelpers.findClass("com.tencent.mm.ui.chatting.viewitems.g0", classLoader)
-        }.getOrNull() ?: return
-        XposedBridge.hookAllMethods(g0, "setChattingItem", object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                try {
-                    handleG0Bind(param, classLoader)
-                } catch (t: Throwable) {
-                    if (diagCount.getAndIncrement() < 10) Logger.e("[$name] g0 处理异常: $t")
-                }
-            }
-        })
-        Logger.i("[$name] 已 Hook g0.setChattingItem")
-    }
+    private fun handleOnBindView(param: XC_MethodHook.MethodHookParam, classLoader: ClassLoader) {
+        val holder = param.args.getOrNull(0) ?: return
 
-    private fun handleG0Bind(param: XC_MethodHook.MethodHookParam, classLoader: ClassLoader) {
-        val g0 = param.thisObject ?: return
-        val holderView = findFieldByNameInHierarchy(g0, "convertView") as? View ?: return
+        // 从 holder 获取 View（convertView / 根 View）
+        val holderView = findFieldByNameInHierarchy(holder, "convertView") as? View
+            ?: (holder as? View)
+            ?: findFieldOfType(holder, View::class.java) as? View
+            ?: return
 
-        // 参数 dump(找 MsgInfo 入口 + 完整字段)
-        if (diagCount.get() < 4) {
-            val sb = StringBuilder("setChattingItem 参数: ")
-            param.args.forEachIndexed { idx, a ->
-                val d = when (a) {
-                    null -> "null"
-                    is String -> "Str(${a.take(12)})"
-                    is Number -> "${a.javaClass.simpleName}($a)"
-                    is View -> "V:${a.javaClass.simpleName}"
-                    else -> a.javaClass.name.substringAfterLast('.')
-                }
-                sb.append("[$idx]${a?.javaClass?.name ?: ""}=$d | ")
-                if (a != null && a !is String && a !is Number && a !is View) {
-                    val ct = readCreateTimeSec(a)
-                    if (ct > 0) sb.append("[ct=$ct]")
-                    // 全层级字段:找 msgId
-                    var c: Class<*>? = a.javaClass
-                    var n = 0
-                    while (c != null && c != Any::class.java && n < 60) {
-                        for (f in c.declaredFields) {
-                            if (++n > 60) break
-                            if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
-                            try {
-                                f.isAccessible = true
-                                val v = f.get(a)
-                                val dv = when (v) {
-                                    null -> "null"
-                                    is String -> "Str(${v.take(10)})"
-                                    is Number -> "${v.javaClass.simpleName}($v)"
-                                    else -> v.javaClass.simpleName
-                                }
-                                sb.append(f.name).append(":").append(f.type.simpleName).append("=").append(dv).append(" | ")
-                            } catch (_: Throwable) {}
-                        }
-                        c = c.superclass
-                    }
-                }
-            }
-            Logger.i("[$name] [DIAG] $sb")
+        // 获取 msgId (args[2])
+        val msgId = (param.args.getOrNull(2) as? Int) ?: -1
+        if (msgId < 0) {
+            if (diagCount.get() < 3) Logger.i("[$name] [DIAG] msgId 无效: $msgId")
+            return
         }
 
-        // 时间来源:
-        // A) setChattingItem 参数里的 MsgInfo
-        var createTimeSec = 0L
-        for (a in param.args) {
-            if (a != null && a !is String && a !is Number && a !is View) {
-                createTimeSec = readCreateTimeSec(a)
-                if (createTimeSec > 0) break
-            }
-        }
-        // B) g0 对象图里递归找 field_createTime
+        // 获取 createTime
+        val createTimeSec = findCreateTimeFromHolder(holder, msgId, classLoader)
         if (createTimeSec <= 0) {
-            createTimeSec = findCreateTimeInGraph(g0, 0, java.util.HashSet())
-        }
-        // C) chatHolder(adapter.o) 的 position -> getItem 映射
-        if (createTimeSec <= 0) {
-            val chatHolder = findFieldByNameInHierarchy(g0, "chatHolder")
-            val pos = chatHolder?.let { ch ->
-                runCatching {
-                    val m = ch.javaClass.methods.firstOrNull { it.name == "getAdapterPosition" && it.parameterCount == 0 }
-                    m?.invoke(ch) as? Int
-                }.getOrNull()
-            }
-            if (pos != null && pos >= 0) {
-                createTimeSec = itemTimeMap.remove(pos) ?: itemTimeMap[pos] ?: 0L
-                if (diagCount.get() < 6) Logger.i("[$name] [DIAG] pos=$pos -> ct=$createTimeSec")
-            }
+            if (diagCount.get() < 3) Logger.i("[$name] [DIAG] createTime 获取失败")
+            return
         }
 
-        if (diagCount.getAndIncrement() < 10) {
-            Logger.i("[$name] [DIAG] createTime=$createTimeSec")
-        }
-        if (createTimeSec <= 0) return
+        val timeText = SimpleDateFormat(timeFormat(), Locale.getDefault())
+            .format(Date(createTimeSec * 1000))
 
-        val timeText = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-            .format(java.util.Date(createTimeSec * 1000))
+        if (diagCount.get() < 5) {
+            Logger.i("[$name] [DIAG] msgId=$msgId createTime=$createTimeSec timeText=$timeText")
+        }
 
         if (mode() == "message") {
-            ensureMsgTimeBelowBubble(holderView, timeText)
+            handleMessageMode(holderView, holder, timeText)
         } else {
-            ensureAvatarTime(holderView, timeText)
+            handleAvatarMode(holderView, timeText)
         }
     }
 
-    /** 对象图递归找 field_createTime（秒）。 */
-    private fun findCreateTimeInGraph(obj: Any?, depth: Int, visited: java.util.HashSet<Int>): Long {
-        if (obj == null || depth > 3 || visited.size > 300) return 0
+    /**
+     * message 模式：直接修改微信原生 timeTV
+     * 参考 WeKit2：从 view.tag 获取 timeTV 字段
+     */
+    private fun handleMessageMode(holderView: View, holder: Any, timeText: String) {
+        // 尝试从 view.tag 获取 timeTV（WeKit2 方案）
+        val timeTV = findTimeTVFromView(holderView)
+            ?: findTimeTVFromHolder(holder)
+
+        if (timeTV != null) {
+            // 直接修改原生 timeTV
+            timeTV.text = timeText
+            timeTV.visibility = View.VISIBLE
+            timeTV.setTextSize(TypedValue.COMPLEX_UNIT_SP, textSize())
+
+            // 调整布局参数：消息居左/居右
+            val lp = timeTV.layoutParams as? RelativeLayout.LayoutParams
+            if (lp != null) {
+                val isLeft = isLeftMessage(holder)
+                lp.removeRule(RelativeLayout.CENTER_HORIZONTAL)
+                if (isLeft) {
+                    lp.addRule(RelativeLayout.ALIGN_PARENT_START)
+                    lp.removeRule(RelativeLayout.ALIGN_PARENT_END)
+                    lp.marginStart = dpToPx(holderView.context, 12)
+                    lp.marginEnd = 0
+                    timeTV.gravity = Gravity.START
+                } else {
+                    lp.addRule(RelativeLayout.ALIGN_PARENT_END)
+                    lp.removeRule(RelativeLayout.ALIGN_PARENT_START)
+                    lp.marginEnd = dpToPx(holderView.context, 12)
+                    lp.marginStart = 0
+                    timeTV.gravity = Gravity.END
+                }
+                timeTV.layoutParams = lp
+            }
+            if (diagCount.get() < 5) {
+                Logger.i("[$name] [DIAG] message 模式已更新 timeTV text=$timeText")
+            }
+        } else {
+            // 兜底：在气泡下方注入时间（原来的方式）
+            if (diagCount.get() < 3) {
+                Logger.i("[$name] [DIAG] message 模式未找到 timeTV，尝试注入方式")
+            }
+            ensureMsgTimeBelowBubble(holderView, timeText)
+        }
+    }
+
+    /**
+     * avatar 模式：头像下方注入时间 TextView
+     */
+    private fun handleAvatarMode(holderView: View, timeText: String) {
+        var avatar: View? = null
+        walk(holderView) { v ->
+            if (v.javaClass.name == AVATAR_VIEW_CLASS) {
+                avatar = v
+                true
+            } else false
+        }
+        val av = avatar ?: return
+
+        var tv = avatarTimeViews[av]
+        if (tv == null || tv.parent == null) {
+            tv = injectTimeBelowAvatar(av) ?: return
+            avatarTimeViews[av] = tv
+        }
+        tv.text = timeText
+        tv.visibility = View.VISIBLE
+    }
+
+    // ============ 查找 timeTV ============
+
+    /** 从 holderView 查找 timeTV（通过遍历或 tag）。 */
+    private fun findTimeTVFromView(holderView: View): TextView? {
+        // 先尝试从 tag 获取
+        val tag = holderView.tag
+        if (tag != null) {
+            val timeTV = findFieldByNameInHierarchy(tag, "timeTV") as? TextView
+            if (timeTV != null) return timeTV
+        }
+
+        // 兜底：遍历 View 树找 TextView（通常 id 为 timeTV 或类似）
+        var found: TextView? = null
+        walk(holderView) { v ->
+            if (v is TextView && v.id != View.NO_ID) {
+                val name = holderView.context.resources.getResourceEntryName(v.id)
+                if (name.contains("time", ignoreCase = true)) {
+                    found = v
+                    return@walk true
+                }
+            }
+            false
+        }
+        return found
+    }
+
+    /** 从 holder 对象查找 timeTV。 */
+    private fun findTimeTVFromHolder(holder: Any): TextView? {
+        // 从 holder 的 tag 或字段中找
+        val tag = holder.let {
+            if (it is View) it.tag else findFieldByNameInHierarchy(it, "tag")
+        }
+        if (tag != null && tag is View) {
+            return findTimeTVFromView(tag)
+        }
+        // 直接从 holder 字段找
+        return findFieldByNameInHierarchy(holder, "timeTV") as? TextView
+    }
+
+    // ============ 获取 createTime ============
+
+    /** 从 holder 和 msgId 获取 createTime。 */
+    private fun findCreateTimeFromHolder(holder: Any, msgId: Int, classLoader: ClassLoader): Long {
+        // 1. 直接从 holder 参数中找 MsgInfo（args 里的对象）
+        val holderView = findFieldByNameInHierarchy(holder, "convertView") as? View
+            ?: (holder as? View)
+
+        if (holderView != null) {
+            // 尝试从 holderView 关联的对象获取
+            val createTime = findCreateTimeInViewGraph(holderView, 0, java.util.HashSet())
+            if (createTime > 0) return createTime
+        }
+
+        // 2. 通过 ChattingDataAdapter.getItem(msgId) 获取
+        val adapter = findFieldOfAdapterLike(holder)
+        if (adapter != null) {
+            val msgInfo = runCatching {
+                // 尝试 getItem(int)
+                val getItemMethod = adapter.javaClass.methods.firstOrNull {
+                    it.name == "getItem" && it.parameterTypes.size == 1 &&
+                            it.parameterTypes[0] == Integer.TYPE
+                }
+                getItemMethod?.invoke(adapter, msgId)
+            }.getOrNull()
+
+            if (msgInfo != null) {
+                val ct = readCreateTimeSec(msgInfo)
+                if (ct > 0) {
+                    if (diagCount.get() < 5) {
+                        Logger.i("[$name] [DIAG] getItem($msgId) -> ct=$ct")
+                    }
+                    return ct
+                }
+            }
+        }
+
+        // 3. 递归在 holder 对象图里找
+        return findCreateTimeInObjectGraph(holder, 0, java.util.HashSet())
+    }
+
+    /** 在对象图里递归找 field_createTime。 */
+    private fun findCreateTimeInObjectGraph(obj: Any?, depth: Int, visited: java.util.HashSet<Int>): Long {
+        if (obj == null || depth > 3 || visited.size > 200) return 0
         if (obj is String || obj is Number || obj is Boolean || obj is Char ||
             obj is android.graphics.drawable.Drawable || obj is View || obj is android.app.Activity
         ) return 0
         val id = System.identityHashCode(obj)
         if (!visited.add(id)) return 0
+
+        // 直接检查是否是 MsgInfo
+        val ct = readCreateTimeSec(obj)
+        if (ct > 0) return ct
+
+        // 遍历字段
         var c: Class<*>? = obj.javaClass
         var checked = 0
         while (c != null && c != Any::class.java && checked < 30) {
             for (f in c.declaredFields) {
-                if (++checked > 200) return 0
+                if (++checked > 150) return 0
                 if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
                 try {
                     f.isAccessible = true
                     val t = f.type
-                    if (t == java.lang.Long.TYPE && f.name == "field_createTime") {
-                        val v = f.getLong(obj)
-                        if (v in 1_000_000_000L..2_500_000_000L) return v
-                    }
                     if (!t.isPrimitive && !t.isArray && !t.name.startsWith("java.") &&
                         !t.name.startsWith("android.") && !t.name.startsWith("kotlin.")
                     ) {
                         val child = f.get(obj) ?: continue
-                        val r = findCreateTimeInGraph(child, depth + 1, visited)
-                        if (r > 0) return r
+                        val result = findCreateTimeInObjectGraph(child, depth + 1, visited)
+                        if (result > 0) return result
                     }
                 } catch (_: Throwable) {}
             }
@@ -276,133 +347,59 @@ object AvatarTimeFeature : Feature {
         return 0
     }
 
-    // ============ onBindView 路径(部分版本微信) ============
+    /** 在 View 对象图里找 field_createTime（用于从 View 找关联的 MsgInfo）。 */
+    private fun findCreateTimeInViewGraph(view: View, depth: Int, visited: java.util.HashSet<Int>): Long {
+        if (view == null || depth > 3 || visited.size > 100) return 0
+        val id = System.identityHashCode(view)
+        if (!visited.add(id)) return 0
 
-    private fun handleOnBindView(param: XC_MethodHook.MethodHookParam, classLoader: ClassLoader) {
-        val holder = param.args.getOrNull(0) ?: return
-        if (diagCount.getAndIncrement() < 6) {
-            val sb = StringBuilder("onBindView: args=")
-            param.args.forEachIndexed { idx, a ->
-                val d = when (a) {
-                    null -> "null"
-                    is String -> "Str(${a.take(10)})"
-                    is Number -> "${a.javaClass.simpleName}($a)"
-                    is View -> "V:${a.javaClass.simpleName}"
-                    else -> a.javaClass.name.substringAfterLast('.')
-                }
-                sb.append("[$idx]$d | ")
-            }
-            sb.append("this=").append(param.thisObject?.javaClass?.name)
-            Logger.i("[$name] [DIAG] $sb")
+        // 检查 tag
+        val tag = view.tag
+        if (tag != null && tag !is View) {
+            val ct = readCreateTimeSec(tag)
+            if (ct > 0) return ct
         }
 
-        // 时间来源(依次尝试):
-        // A) args 里的对象直接读 field_createTime
-        var createTimeSec = 0L
-        for (a in param.args) {
-            if (a != null && a !is String && a !is Number && a !is View) {
-                createTimeSec = readCreateTimeSec(a)
-                if (createTimeSec > 0) break
-            }
-        }
-        // B) thisObject(ve5.g) 找 adapter 字段 -> getItem(msgId)
-        val msgId = (param.args.getOrNull(2) as? Int) ?: -1
-        if (createTimeSec <= 0) {
-            val adapter = findFieldOfAdapterLike(param.thisObject)
-            if (adapter != null) {
-                // 8.0.76: adapter.k 有 getItem(I)/K0(J)/J0(I) 拿 MsgInfo(storage.e9)
-                var msgInfo: Any? = null
-                // K0(msgId long)
-                msgInfo = runCatching {
-                    val m = adapter.javaClass.methods.firstOrNull {
-                        it.name == "K0" && it.parameterTypes.size == 1 &&
-                            it.parameterTypes[0] == java.lang.Long.TYPE
-                    }
-                    m?.invoke(adapter, msgId.toLong())
-                }.getOrNull()
-                // J0(msgId int)
-                if (msgInfo == null) {
-                    msgInfo = runCatching {
-                        val m = adapter.javaClass.methods.firstOrNull {
-                            it.name == "J0" && it.parameterTypes.size == 1 &&
-                                it.parameterTypes[0] == java.lang.Integer.TYPE
-                        }
-                        m?.invoke(adapter, msgId)
-                    }.getOrNull()
-                }
-                // getItem(int)
-                if (msgInfo == null) {
-                    msgInfo = runCatching {
-                        val m = adapter.javaClass.methods.firstOrNull {
-                            it.name == "getItem" && it.parameterTypes.size == 1
-                        }
-                        m?.invoke(adapter, msgId)
-                    }.getOrNull()
-                }
-                createTimeSec = msgInfo?.let { readCreateTimeSec(it) } ?: 0L
-                if (diagCount.get() < 8) Logger.i("[$name] [DIAG] adapter=${adapter.javaClass.name} msgId=$msgId -> ${msgInfo?.javaClass?.name} ct=$createTimeSec")
-            }
-        }
-        // C) 对象图递归(thisObject + args)
-        if (createTimeSec <= 0) {
-            createTimeSec = findCreateTimeInGraph(param.thisObject, 0, java.util.HashSet())
-            if (createTimeSec <= 0) {
-                for (a in param.args) {
-                    if (a != null) {
-                        createTimeSec = findCreateTimeInGraph(a, 0, java.util.HashSet())
-                        if (createTimeSec > 0) break
-                    }
-                }
-            }
-        }
-        // D) ve5.g 字段 dump(前几次)
-        if (diagCount.get() < 3) {
-            val sb = StringBuilder("ve5.g 字段: ")
-            var c: Class<*>? = param.thisObject.javaClass
-            var n = 0
-            while (c != null && c != Any::class.java && n < 40) {
-                for (f in c.declaredFields) {
-                    if (++n > 40) break
-                    if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
-                    try {
-                        f.isAccessible = true
-                        val v = f.get(param.thisObject)
-                        val d = when (v) {
-                            null -> "null"
-                            is String -> "Str(${v.take(8)})"
-                            is Number -> "${v.javaClass.simpleName}($v)"
-                            else -> v.javaClass.name.substringAfterLast('.')
-                        }
-                        sb.append(f.name).append(":").append(f.type.simpleName).append("=").append(d).append(" | ")
-                    } catch (_: Throwable) {}
-                }
-                c = c.superclass
-            }
-            Logger.i("[$name] [DIAG] $sb")
+        // 检查 holder 对象
+        val holder = view.tag
+        if (holder != null && holder !is View) {
+            val ct = findCreateTimeInObjectGraph(holder, 0, java.util.HashSet())
+            if (ct > 0) return ct
         }
 
-        if (diagCount.getAndIncrement() < 10) {
-            Logger.i("[$name] [DIAG] createTime=$createTimeSec")
+        // 递归检查子 View
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                val child = view.getChildAt(i)
+                val ct = findCreateTimeInViewGraph(child, depth + 1, visited)
+                if (ct > 0) return ct
+            }
         }
-        if (createTimeSec <= 0) return
-
-        val timeText = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-            .format(java.util.Date(createTimeSec * 1000))
-
-        if (mode() == "message") {
-            // WA 式：保留微信原生 timeTV 不动，在气泡下方注入无背景时间 TextView
-            val holderView = findFieldByNameInHierarchy(holder, "convertView") as? View
-                ?: findFieldOfType(holder, View::class.java) as? View ?: return
-            ensureMsgTimeBelowBubble(holderView, timeText)
-        } else {
-            // 头像下方注入
-            val holderView = findFieldByNameInHierarchy(holder, "convertView") as? View
-                ?: findFieldOfType(holder, View::class.java) as? View ?: return
-            ensureAvatarTime(holderView, timeText)
-        }
+        return 0
     }
 
-    /** 在对象上找“像 adapter”的字段：有 getItem(int) 方法。 */
+    /** 读 MsgInfo 的 field_createTime（秒）。 */
+    private fun readCreateTimeSec(mi: Any): Long = runCatching {
+        var c: Class<*>? = mi.javaClass
+        while (c != null && c != Any::class.java) {
+            for (f in c.declaredFields) {
+                if (f.name == "field_createTime" && f.type == java.lang.Long.TYPE) {
+                    f.isAccessible = true
+                    val v = f.getLong(mi)
+                    // 秒级时间戳范围
+                    if (v in 1_000_000_000L..2_500_000_000L) return v
+                    // 毫秒级时间戳范围
+                    if (v in 1_000_000_000_000L..2_500_000_000_000L) return v / 1000
+                }
+            }
+            c = c.superclass
+        }
+        0L
+    }.getOrDefault(0L)
+
+    // ============ 辅助方法 ============
+
+    /** 在对象上找"像 adapter"的字段（有 getItem 方法）。 */
     private fun findFieldOfAdapterLike(obj: Any): Any? {
         var c: Class<*>? = obj.javaClass
         while (c != null && c != Any::class.java) {
@@ -420,50 +417,99 @@ object AvatarTimeFeature : Feature {
         return null
     }
 
-    /** message 模式（WA 式）：气泡下方无背景时间。item 根是 RelativeLayout。 */
+    /** 判断是左/右侧消息（通过 holder 的 isSend 字段）。 */
+    private fun isLeftMessage(holder: Any): Boolean {
+        // 尝试找 isSend 字段
+        val isSend = runCatching {
+            var c: Class<*>? = holder.javaClass
+            while (c != null && c != Any::class.java) {
+                for (f in c.declaredFields) {
+                    if (f.name == "isSend" || f.name == "field_isSend") {
+                        f.isAccessible = true
+                        return@runCatching when (val v = f.get(holder)) {
+                            is Int -> v == 0  // 0 = 收到的消息（左侧）
+                            is Boolean -> !v
+                            else -> true
+                        }
+                    }
+                }
+                c = c.superclass
+            }
+            true // 默认返回左侧
+        }.getOrDefault(true)
+
+        return isSend
+    }
+
+    /** message 模式兜底：气泡下方注入时间。 */
     private fun ensureMsgTimeBelowBubble(holderView: View, timeText: String) {
         val root = holderView as? ViewGroup ?: return
+
+        var tv = processedItems[root]?.let { null } // 暂时不用这个 map
+
+        // 找气泡容器
         var avatar: View? = null
         walk(root) { v ->
             if (v.javaClass.name == AVATAR_VIEW_CLASS) { avatar = v; true } else false
         }
         val bubble = findBubbleContainer(root, avatar)
 
-        var tv = msgTimeViews[root]
-        if (tv == null || tv.parent == null) {
-            tv = TextView(root.context).apply {
+        // 创建或复用时间 TextView
+        val existingTv = findTimeTextView(root)
+        val timeTv = if (existingTv != null) {
+            existingTv
+        } else {
+            TextView(root.context).apply {
                 textSize = 10f
                 setTextColor(0xFF8A8A8A.toInt())
-                // 无背景板
-            }
-            runCatching { root.addView(tv) }.onFailure { return }
-            msgTimeViews[root] = tv
-            if (diagCount.get() < 8) {
-                Logger.i("[$name] [DIAG] 注入气泡下时间 root=${root.javaClass.name} bubble=${bubble?.javaClass?.simpleName}#${bubble?.id?.let { java.lang.Integer.toHexString(it) }}")
+            }.also {
+                runCatching { root.addView(it) }.onFailure { return }
             }
         }
-        tv.text = timeText
-        tv.visibility = View.VISIBLE
 
-        val lp = tv.layoutParams as? android.widget.RelativeLayout.LayoutParams ?: return
+        timeTv.text = timeText
+        timeTv.visibility = View.VISIBLE
+
+        val lp = timeTv.layoutParams as? RelativeLayout.LayoutParams ?: RelativeLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).also { timeTv.layoutParams = it }
+
         if (bubble != null && bubble.id != View.NO_ID) {
-            lp.addRule(android.widget.RelativeLayout.BELOW, bubble.id)
+            lp.addRule(RelativeLayout.BELOW, bubble.id)
         }
-        lp.removeRule(android.widget.RelativeLayout.ALIGN_PARENT_START)
-        lp.removeRule(android.widget.RelativeLayout.ALIGN_PARENT_END)
-        if (isLeftAvatar(avatar)) {
-            lp.addRule(android.widget.RelativeLayout.ALIGN_PARENT_START)
-            tv.gravity = Gravity.START
+
+        val isLeft = avatar?.let { isLeftAvatar(it) } ?: true
+        lp.removeRule(RelativeLayout.ALIGN_PARENT_START)
+        lp.removeRule(RelativeLayout.ALIGN_PARENT_END)
+        if (isLeft) {
+            lp.addRule(RelativeLayout.ALIGN_PARENT_START)
+            timeTv.gravity = Gravity.START
         } else {
-            lp.addRule(android.widget.RelativeLayout.ALIGN_PARENT_END)
-            tv.gravity = Gravity.END
+            lp.addRule(RelativeLayout.ALIGN_PARENT_END)
+            timeTv.gravity = Gravity.END
         }
+
         val d = root.context.resources.displayMetrics.density
         lp.topMargin = (d * 2).toInt()
-        tv.layoutParams = lp
+        timeTv.layoutParams = lp
     }
 
-    /** 找气泡容器：item 根里不含头像的最大 ViewGroup。 */
+    /** 查找已有的时间 TextView（避免重复注入）。 */
+    private fun findTimeTextView(root: ViewGroup): TextView? {
+        var found: TextView? = null
+        walk(root) { v ->
+            if (v is TextView && v.textSize <= 11f &&
+                (v.currentTextColor and 0xFF000000.toInt()) == 0x8A8A8A.toInt()
+            ) {
+                // 简单判断：字体小、灰色
+                found = v
+                true
+            } else false
+        }
+        return found
+    }
+
+    /** 找气泡容器。 */
     private fun findBubbleContainer(root: ViewGroup, avatar: View?): ViewGroup? {
         var candidate: ViewGroup? = null
         for (i in 0 until root.childCount) {
@@ -483,7 +529,7 @@ object AvatarTimeFeature : Feature {
         return false
     }
 
-    /** 从头像窗口坐标判断消息方向（左=对方，右=自己）。 */
+    /** 从头像窗口坐标判断消息方向。 */
     private fun isLeftAvatar(avatar: View?): Boolean {
         if (avatar == null || avatar.width <= 0 || !avatar.isAttachedToWindow) return true
         val loc = IntArray(2)
@@ -493,29 +539,8 @@ object AvatarTimeFeature : Feature {
         return cx <= screenW / 2f
     }
 
-    /** avatar 模式：头像下方注入时间 TextView。 */
-    private fun ensureAvatarTime(holderView: View, timeText: String) {
-        var avatar: View? = null
-        walk(holderView) { v ->
-            if (v.javaClass.name == AVATAR_VIEW_CLASS) {
-                avatar = v
-                true
-            } else false
-        }
-        val av = avatar ?: return
-        var tv = avatarTimeViews[av]
-        if (tv == null || tv.parent == null) {
-            tv = injectTimeBelowAvatar(av) ?: return
-            avatarTimeViews[av] = tv
-        }
-        tv.text = timeText
-        tv.visibility = View.VISIBLE
-    }
-
-    /** 把头像(或其 MaskLayout 遮罩容器)包进垂直容器(头像+时间)。
-     * 头像通常包在 MaskLayout(圆形遮罩)里——包装 MaskLayout 而非头像本身,避免破坏圆形。 */
+    /** 头像下方注入时间。 */
     private fun injectTimeBelowAvatar(avatar: View): TextView? {
-        // 若父容器是 MaskLayout,包装父容器;否则包装头像
         val maskParent = avatar.parent
         val target = if (maskParent != null &&
             maskParent.javaClass.name.contains("MaskLayout")
@@ -538,10 +563,10 @@ object AvatarTimeFeature : Feature {
 
         val tv = TextView(target.context).apply {
             text = ""
-            textSize = 10f
+            textSize = textSize()
             setTextColor(0xFF8A8A8A.toInt())
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, 2, 0, 0)
+            setPadding(0, dpToPx(target.context, 2), 0, 0)
         }
         wrapper.addView(tv, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -550,7 +575,7 @@ object AvatarTimeFeature : Feature {
         return tv
     }
 
-    // ============ 反射工具 ============
+    // ============ 工具方法 ============
 
     private fun walk(root: View, visitor: (View) -> Boolean) {
         if (visitor(root)) return
@@ -559,7 +584,6 @@ object AvatarTimeFeature : Feature {
         }
     }
 
-    /** 在对象(含父类)上找指定名字的字段值。 */
     private fun findFieldByNameInHierarchy(obj: Any, name: String): Any? {
         var c: Class<*>? = obj.javaClass
         while (c != null && c != Any::class.java) {
@@ -572,7 +596,6 @@ object AvatarTimeFeature : Feature {
         return null
     }
 
-    /** 在对象(含父类)上找指定类型的字段值。 */
     private fun findFieldOfType(obj: Any, type: Class<*>): Any? {
         var c: Class<*>? = obj.javaClass
         while (c != null && c != Any::class.java) {
@@ -587,20 +610,7 @@ object AvatarTimeFeature : Feature {
         return null
     }
 
-    /** 读 MsgInfo 的 field_createTime（秒）。 */
-    private fun readCreateTimeSec(mi: Any): Long = runCatching {
-        var c: Class<*>? = mi.javaClass
-        while (c != null && c != Any::class.java) {
-            for (f in c.declaredFields) {
-                if (f.name == "field_createTime" && f.type == java.lang.Long.TYPE) {
-                    f.isAccessible = true
-                    val v = f.getLong(mi)
-                    if (v in 1_000_000_000L..2_500_000_000L) return v
-                    if (v in 1_000_000_000_000L..2_500_000_000_000L) return v / 1000
-                }
-            }
-            c = c.superclass
-        }
-        0L
-    }.getOrDefault(0L)
+    private fun dpToPx(context: android.content.Context, dp: Int): Int {
+        return (dp * context.resources.displayMetrics.density).toInt()
+    }
 }

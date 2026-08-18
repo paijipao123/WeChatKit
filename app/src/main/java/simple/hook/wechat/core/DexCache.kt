@@ -35,10 +35,10 @@ object DexCache {
         }
     }
 
-    /** 查询 key 生成：类型 + 字符串列表 + 限定类。 */
+    /** 查询 key 生成：cls:/mtd: + 字符串 hash(避免旧缓存命中)。 */
     fun keyForClass(strings: Array<out String>): String =
-        "cls:" + strings.sorted().joinToString("|")
+        "cls:" + strings.sorted().joinToString("|") + "#" + strings.hashCode().toString(16)
 
     fun keyForMethod(strings: Array<out String>, declared: String?): String =
-        "mtd:" + (declared ?: "*") + ":" + strings.sorted().joinToString("|")
+        "mtd:" + (declared ?: "*") + ":" + strings.sorted().joinToString("|") + "#" + strings.hashCode().toString(16)
 }
