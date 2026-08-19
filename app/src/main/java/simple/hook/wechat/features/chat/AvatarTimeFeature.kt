@@ -488,21 +488,28 @@ object AvatarTimeFeature : Feature {
         } catch (_: Throwable) {
             timeTv.layoutParams
         }
+        // 真正的根因:微信是自定义 RecyclerView(ChattingRecyclerView),androidx 的 RecyclerView.LayoutParams
+        // 不能 cast 到它。任何 RV 内的子 View 都会崩。**加 TextView 到 RV 树之外**。
+        var anc: android.view.ViewParent = root.parent
+        while (anc is androidx.recyclerview.widget.RecyclerView) anc = anc.parent ?: break
+        val rvOutParent = (anc as? android.view.ViewGroup) ?: return
         val densityVal = root.context.resources.displayMetrics.density
+        // 用 rvOutParent 自己的 LP 类型(FrameLayout.LayoutParams /LinearLayout.LayoutParams)
+        val lpCls = rvOutParent.javaClass
+        val ctor = lpCls.getDeclaredConstructor(
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType
+        )
+        val lp = ctor.newInstance(
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        ) as android.view.ViewGroup.LayoutParams
         val m = densityVal.toInt()
-        try {
-            lp::class.java.getMethod("setMargins", Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-                .invoke(lp, m * 4, 0, m * 50, 0)
-        } catch (_: Throwable) {}
-        try {
-            val isLeft = avatar?.let { isLeftAvatar(it) } ?: true
-            if (isLeft) lp::class.java.getMethod("setMarginStart", Int::class.javaPrimitiveType)
-                .invoke(lp, m * 12)
-            else lp::class.java.getMethod("setMarginEnd", Int::class.javaPrimitiveType)
-                .invoke(lp, m * 12)
-        } catch (_: Throwable) {}
+        lp.topMargin = m * 50
+        val isLeft = avatar?.let { isLeftAvatar(it) } ?: true
+        if (isLeft) { lp.leftMargin = m * 12; lp.topMargin = m * 60 }
+        else { lp.rightMargin = m * 12; lp.topMargin = m * 60 }
         timeTv.layoutParams = lp
+        rvOutParent.addView(timeTv)
     }
 
     /** 查找已有的时间 TextView（避免重复注入）。 */
