@@ -470,24 +470,17 @@ object AvatarTimeFeature : Feature {
         timeTv.text = timeText
         timeTv.visibility = View.VISIBLE
 
-        val lp = timeTv.layoutParams as? RelativeLayout.LayoutParams ?: RelativeLayout.LayoutParams(
+        // 使用 FrameLayout.LayoutParams 兼容任何 ViewGroup(RelativeLayout 也接受)
+        val lp = timeTv.layoutParams as? FrameLayout.LayoutParams ?: FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).also { timeTv.layoutParams = it }
-
-        if (bubble != null && bubble.id != View.NO_ID) {
-            lp.addRule(RelativeLayout.BELOW, bubble.id)
-        }
-
+        val d = root.context.resources.displayMetrics.density
+        lp.bottomMargin = (d * 4).toInt()  // 距底 4dp
+        // 强制放最上层
+        lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        // 占位:不强求居中了,居中即可
         val isLeft = avatar?.let { isLeftAvatar(it) } ?: true
-        lp.removeRule(RelativeLayout.ALIGN_PARENT_START)
-        lp.removeRule(RelativeLayout.ALIGN_PARENT_END)
-        if (isLeft) {
-            lp.addRule(RelativeLayout.ALIGN_PARENT_START)
-            timeTv.gravity = Gravity.START
-        } else {
-            lp.addRule(RelativeLayout.ALIGN_PARENT_END)
-            timeTv.gravity = Gravity.END
-        }
+        timeTv.gravity = if (isLeft) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.END or Gravity.CENTER_VERTICAL
 
         val d = root.context.resources.displayMetrics.density
         lp.topMargin = (d * 2).toInt()
