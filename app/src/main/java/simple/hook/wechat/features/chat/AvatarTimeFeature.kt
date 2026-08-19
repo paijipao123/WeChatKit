@@ -475,10 +475,17 @@ object AvatarTimeFeature : Feature {
         // 必须用 RecyclerView.LayoutParams(RecyclerView 强转)
         // 微信是自定义 RecyclerView,子 View LP 必须是它自己的内部类(androidx/rv LP 不能转)。
         // 从 itemView.layoutParams 反射创建同类型 LP。
+
+        // 微信 RecyclerView(ChattingRecyclerView)子 View LP 必须用它内部类,强转闪退。
+        // 解法:加 TextView 到 **RV 树之外的祖先**(MMPullDownView/ListView 等)。
+        var anc: android.view.ViewParent = root.parent
+        while (anc is androidx.recyclerview.widget.RecyclerView) anc = anc.parent ?: break
+        val rvOutParent = (anc as? android.view.ViewGroup) ?: return
+        val densityVal = root.context.resources.displayMetrics.density
+        val m = densityVal.toInt()
+        // 反射构造(WRAP_CONTENT, WRAP_CONTENT) — 任何 LP 父类都接受
         val lp: android.view.ViewGroup.LayoutParams = try {
-            val srcLp = root.layoutParams
-            val cls = srcLp.javaClass
-            val ctor = cls.getDeclaredConstructor(
+            val ctor = rvOutParent.javaClass.getDeclaredConstructor(
                 Int::class.javaPrimitiveType, Int::class.javaPrimitiveType
             )
             ctor.newInstance(
@@ -486,28 +493,19 @@ object AvatarTimeFeature : Feature {
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT
             ) as android.view.ViewGroup.LayoutParams
         } catch (_: Throwable) {
-            timeTv.layoutParams
+            android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            )
         }
-        // 真正的根因:微信是自定义 RecyclerView(ChattingRecyclerView),androidx 的 RecyclerView.LayoutParams
-        // 不能 cast 到它。任何 RV 内的子 View 都会崩。**加 TextView 到 RV 树之外**。
-        var anc: android.view.ViewParent = root.parent
-        while (anc is androidx.recyclerview.widget.RecyclerView) anc = anc.parent ?: break
-        val rvOutParent = (anc as? android.view.ViewGroup) ?: return
-        val densityVal = root.context.resources.displayMetrics.density
-        // 用 rvOutParent 自己的 LP 类型(FrameLayout.LayoutParams /LinearLayout.LayoutParams)
-        val lpCls = rvOutParent.javaClass
-        val ctor = lpCls.getDeclaredConstructor(
-            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType
-        )
-        val lp = ctor.newInstance(
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-        ) as android.view.ViewGroup.LayoutParams
-        val m = densityVal.toInt()
-        lp.topMargin = m * 50
-        val isLeft = avatar?.let { isLeftAvatar(it) } ?: true
-        if (isLeft) { lp.leftMargin = m * 12; lp.topMargin = m * 60 }
-        else { lp.rightMargin = m * 12; lp.topMargin = m * 60 }
+        // 用 MagLayoutParams 反射 setMargins(避免 lp.topMargin 不存在问题)
+        try {
+            val mlp = lp.javaClass
+            mlp.getMethod("setMargins",
+                Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType, Int::class.javaPrimitiveType
+            ).invoke(lp, m * 12, m * 60, m * 12, 0)
+        } catch (_: Throwable) {}
         timeTv.layoutParams = lp
         rvOutParent.addView(timeTv)
     }
