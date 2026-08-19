@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.FrameLayout
 import android.widget.RelativeLayout
+import androidx.recyclerview.widget.RecyclerView
 import android.widget.TextView
 import simple.hook.wechat.core.DexKitFinder
 import simple.hook.wechat.core.Feature
@@ -471,17 +472,15 @@ object AvatarTimeFeature : Feature {
         timeTv.text = timeText
         timeTv.visibility = View.VISIBLE
 
-        // 使用 FrameLayout.LayoutParams 兼容任何 ViewGroup(RelativeLayout 也接受)
-        val lp = timeTv.layoutParams as? FrameLayout.LayoutParams ?: FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        // 必须用 RecyclerView.LayoutParams(RecyclerView 强转)
+        val lp = timeTv.layoutParams as? RecyclerView.LayoutParams ?: RecyclerView.LayoutParams(
+            RecyclerView.LayoutParams.WRAP_CONTENT, RecyclerView.LayoutParams.WRAP_CONTENT
         ).also { timeTv.layoutParams = it }
         val densityVal = root.context.resources.displayMetrics.density
-        lp.bottomMargin = (densityVal * 4).toInt()  // 距底 4dp
-        // 强制放最上层
-        lp.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        // 占位:不强求居中了,居中即可
+        lp.bottomMargin = (densityVal * 4).toInt()
         val isLeft = avatar?.let { isLeftAvatar(it) } ?: true
-        timeTv.gravity = if (isLeft) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.END or Gravity.CENTER_VERTICAL
+        if (isLeft) lp.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        else lp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
         timeTv.layoutParams = lp
     }
 
