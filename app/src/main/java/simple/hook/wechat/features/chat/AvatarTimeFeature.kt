@@ -473,17 +473,35 @@ object AvatarTimeFeature : Feature {
         timeTv.visibility = View.VISIBLE
 
         // 必须用 RecyclerView.LayoutParams(RecyclerView 强转)
-        val lp = timeTv.layoutParams as? RecyclerView.LayoutParams ?: RecyclerView.LayoutParams(
-            RecyclerView.LayoutParams.WRAP_CONTENT, RecyclerView.LayoutParams.WRAP_CONTENT
-        ).also { timeTv.layoutParams = it }
+        // 微信是自定义 RecyclerView,子 View LP 必须是它自己的内部类(androidx/rv LP 不能转)。
+        // 从 itemView.layoutParams 反射创建同类型 LP。
+        val lp: android.view.ViewGroup.LayoutParams = try {
+            val srcLp = root.layoutParams
+            val cls = srcLp.javaClass
+            val ctor = cls.getDeclaredConstructor(
+                Int::class.javaPrimitiveType, Int::class.javaPrimitiveType
+            )
+            ctor.newInstance(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            ) as android.view.ViewGroup.LayoutParams
+        } catch (_: Throwable) {
+            timeTv.layoutParams
+        }
         val densityVal = root.context.resources.displayMetrics.density
-        lp.bottomMargin = (densityVal * 4).toInt()
-        lp.topMargin = (densityVal * 50).toInt()  // 偏移位置
-        // 用 setMargins 模拟底部居中位置
-        val lpWidth = root.width
-        val isLeft = avatar?.let { isLeftAvatar(it) } ?: true
-        if (isLeft) lp.marginStart = (densityVal * 12).toInt()
-        else lp.marginEnd = (densityVal * 12).toInt()
+        val m = densityVal.toInt()
+        try {
+            lp::class.java.getMethod("setMargins", Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                .invoke(lp, m * 4, 0, m * 50, 0)
+        } catch (_: Throwable) {}
+        try {
+            val isLeft = avatar?.let { isLeftAvatar(it) } ?: true
+            if (isLeft) lp::class.java.getMethod("setMarginStart", Int::class.javaPrimitiveType)
+                .invoke(lp, m * 12)
+            else lp::class.java.getMethod("setMarginEnd", Int::class.javaPrimitiveType)
+                .invoke(lp, m * 12)
+        } catch (_: Throwable) {}
         timeTv.layoutParams = lp
     }
 
