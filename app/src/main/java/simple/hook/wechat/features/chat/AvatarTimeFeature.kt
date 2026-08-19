@@ -482,9 +482,6 @@ object AvatarTimeFeature : Feature {
         // 占位:不强求居中了,居中即可
         val isLeft = avatar?.let { isLeftAvatar(it) } ?: true
         timeTv.gravity = if (isLeft) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.END or Gravity.CENTER_VERTICAL
-
-        val densityVal = root.context.resources.displayMetrics.density
-        lp.topMargin = (d * 2).toInt()
         timeTv.layoutParams = lp
     }
 
