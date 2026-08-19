@@ -478,9 +478,12 @@ object AvatarTimeFeature : Feature {
         ).also { timeTv.layoutParams = it }
         val densityVal = root.context.resources.displayMetrics.density
         lp.bottomMargin = (densityVal * 4).toInt()
+        lp.topMargin = (densityVal * 50).toInt()  // 偏移位置
+        // 用 setMargins 模拟底部居中位置
+        val lpWidth = root.width
         val isLeft = avatar?.let { isLeftAvatar(it) } ?: true
-        if (isLeft) lp.gravity = Gravity.START or Gravity.CENTER_VERTICAL
-        else lp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        if (isLeft) lp.marginStart = (densityVal * 12).toInt()
+        else lp.marginEnd = (densityVal * 12).toInt()
         timeTv.layoutParams = lp
     }
 
