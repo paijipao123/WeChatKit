@@ -45,6 +45,7 @@ class HookEntry : IXposedHookLoadPackage {
             AutoCollectTransferFeature,
             simple.hook.wechat.features.system.SignatureBypassFeature,
             simple.hook.wechat.features.system.TabletModeFeature,
+            simple.hook.wechat.features.beautify.MeTabPageFeature,
         )
     }
 

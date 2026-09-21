@@ -14,6 +14,7 @@ import com.google.android.material.card.MaterialCardView
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.button.MaterialButton
 import simple.hook.wechat.core.Prefs
+import simple.hook.wechat.features.beautify.MeTabPageFeature
 import simple.hook.wechat.features.chat.AntiRecallFeature
 import simple.hook.wechat.features.chat.HideAvatarFeature
 import simple.hook.wechat.features.money.AutoCollectTransferFeature
@@ -127,6 +128,24 @@ class MainActivity : AppCompatActivity() {
                     params = listOf(
                         ParamItem("收款延迟（毫秒）", "auto_collect_delay", "默认 1000"),
                         ParamItem("屏蔽名单", "blocked_talkers", "逗号分隔昵称/微信号")
+                    )),
+            )
+        ))
+
+        // ---- 界面美化卡片 ----
+        root.addView(card(
+            "界面美化",
+            listOf(
+                SwitchItem("「我」页面精简",
+                    "隐藏「我」页面的指定入口（类似 WeKit）",
+                    "feat_${MeTabPageFeature.key}", MeTabPageFeature.defaultEnabled(),
+                    params = listOf(
+                        ParamItem("隐藏朋友圈入口", "me_hide_moments", type = "switch"),
+                        ParamItem("隐藏作品/视频号入口", "me_hide_finder", type = "switch",
+                            supporting = "文案可能是「视频号」「视频号和公众号」或「作品」"),
+                        ParamItem("隐藏卡包入口", "me_hide_cards", type = "switch",
+                            supporting = "文案可能是「卡包」或「小店与卡包」"),
+                        ParamItem("隐藏表情入口", "me_hide_emoji", type = "switch"),
                     )),
             )
         ))
@@ -313,6 +332,7 @@ class MainActivity : AppCompatActivity() {
             when (p.type) {
                 "choice" -> inner.addView(choiceGroup(p))
                 "seekbar" -> inner.addView(seekBarRow(p))
+                "switch" -> inner.addView(switchParamRow(p))
                 else -> {
                     inner.addView(textInputLabel(p.label))
                     inner.addView(textInput(p.prefKey, p.hint, p.supporting))
@@ -331,9 +351,41 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /** 开关型参数行：label + MaterialSwitch，切换即保存。 */
+    private fun switchParamRow(p: ParamItem): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val textCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        textCol.addView(TextView(this).apply {
+            text = p.label
+            textSize = 14f
+            setTextColor(0xFF1F1F1F.toInt())
+        })
+        if (p.supporting.isNotEmpty()) {
+            textCol.addView(TextView(this).apply {
+                text = p.supporting
+                textSize = 11f
+                setTextColor(0xFF9E9E9E.toInt())
+                setPadding(0, dp(2), 0, 0)
+            })
+        }
+        row.addView(textCol, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val sw = MaterialSwitch(this).apply {
+            isChecked = Prefs.getBoolean(p.prefKey, false)
+            setOnCheckedChangeListener { _, checked ->
+                Prefs.setBoolean(p.prefKey, checked)
+            }
+        }
+        row.addView(sw)
+        return row
+    }
+
     /** 单选组（Material 风格），选中即保存。 */
-    private fun choiceGroup(p: ParamItem): LinearLayout {
-        val values = if (p.optionValues.isNotEmpty()) p.optionValues else p.options
+    private fun choiceGroup(p: ParamItem): LinearLayout {        val values = if (p.optionValues.isNotEmpty()) p.optionValues else p.options
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(textInputLabel(p.label))
         val current = Prefs.getString(p.prefKey, values.firstOrNull() ?: "")
